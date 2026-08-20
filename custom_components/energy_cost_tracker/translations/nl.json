@@ -1,0 +1,160 @@
+{
+  "title": "Energy Cost Tracker",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Energy Cost Tracker",
+        "description": "Stel de valuta in. Alle energie- en prijsbronnen selecteer je in de volgende stappen.",
+        "data": {
+          "currency": "Valuta"
+        }
+      },
+      "grid": {
+        "title": "Netmeters",
+        "description": "Kies cumulatieve energietellers. Tellerresets en latere sensorwissels worden door de ledger afgehandeld.",
+        "data": {
+          "grid_import_energy": "Cumulatieve netafname",
+          "grid_export_energy": "Cumulatieve teruglevering",
+          "grid_power": "Actueel netvermogen (optioneel)"
+        }
+      },
+      "solar": {
+        "title": "Zonnepanelen",
+        "description": "Je kunt meerdere PV-systemen selecteren. Gebruik bij voorkeur cumulatieve kWh-tellers.",
+        "data": {
+          "pv_energy": "Cumulatieve PV-productie",
+          "pv_power": "Actueel PV-vermogen"
+        }
+      },
+      "battery": {
+        "title": "Thuisbatterij",
+        "description": "Batterijsensoren zijn optioneel. Laad- en ontlaadtellers maken de cost-basisberekening nauwkeuriger.",
+        "data": {
+          "battery_charge_energy": "Cumulatieve laadenergie",
+          "battery_discharge_energy": "Cumulatieve ontlaadenergie",
+          "battery_power": "Batterijvermogen",
+          "battery_soc": "Batterij-SOC",
+          "battery_power_positive": "Positief batterijvermogen betekent",
+          "battery_empty_soc": "SOC beschouwd als leeg (%)"
+        }
+      },
+      "prices": {
+        "title": "Dynamische tarieven",
+        "description": "Prijssensoren mogen leeg blijven totdat je dynamische contract actief is. Multipliers en correcties zetten de bron om naar een effectieve all-in prijs per kWh.",
+        "data": {
+          "import_price": "Afnameprijssensor",
+          "export_price": "Terugleverprijssensor",
+          "import_price_multiplier": "Multiplier afnameprijs",
+          "import_price_adjustment": "Correctie afname per kWh",
+          "export_price_multiplier": "Multiplier terugleverprijs",
+          "export_price_adjustment": "Correctie teruglevering per kWh"
+        }
+      },
+      "billing": {
+        "title": "Vaste kosten en facturatie",
+        "description": "Vaste kosten worden tijdsevenredig opgebouwd. De factuurmaand en het factuurjaar volgen de terugkerende perioden van je leverancier.",
+        "data": {
+          "fixed_daily": "Vaste kosten per dag",
+          "fixed_monthly": "Vaste kosten per maand",
+          "fixed_annual": "Vaste kosten per jaar",
+          "annual_rebate": "Jaarlijkse vaste korting",
+          "billing_month_start_day": "Startdag factuurmaand",
+          "billing_year_start_month": "Startmaand factuurjaar",
+          "billing_year_start_day": "Startdag factuurjaar"
+        }
+      },
+      "reconfigure": {
+        "title": "Energy Cost Tracker opnieuw configureren",
+        "description": "Wijzig sensoren of tarieven zonder historie te verwijderen. Een gewijzigde cumulatieve sensor start automatisch een nieuw intern tellersegment.",
+        "data": {
+          "currency": "Valuta",
+          "grid_import_energy": "Cumulatieve netafname",
+          "grid_export_energy": "Cumulatieve teruglevering",
+          "grid_power": "Actueel netvermogen",
+          "pv_energy": "Cumulatieve PV-productie",
+          "pv_power": "Actueel PV-vermogen",
+          "battery_charge_energy": "Cumulatieve laadenergie",
+          "battery_discharge_energy": "Cumulatieve ontlaadenergie",
+          "battery_power": "Batterijvermogen",
+          "battery_soc": "Batterij-SOC",
+          "battery_power_positive": "Positief batterijvermogen betekent",
+          "battery_empty_soc": "SOC beschouwd als leeg",
+          "import_price": "Afnameprijs",
+          "export_price": "Terugleverprijs",
+          "import_price_multiplier": "Multiplier afnameprijs",
+          "import_price_adjustment": "Correctie afnameprijs",
+          "export_price_multiplier": "Multiplier terugleverprijs",
+          "export_price_adjustment": "Correctie terugleverprijs",
+          "fixed_daily": "Vaste kosten/dag",
+          "fixed_monthly": "Vaste kosten/maand",
+          "fixed_annual": "Vaste kosten/jaar",
+          "annual_rebate": "Jaarlijkse korting",
+          "billing_month_start_day": "Startdag factuurmaand",
+          "billing_year_start_month": "Startmaand factuurjaar",
+          "billing_year_start_day": "Startdag factuurjaar"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Energy Cost Tracker is al geconfigureerd.",
+      "reconfigure_successful": "Energy Cost Tracker is opnieuw geconfigureerd."
+    }
+  },
+  "selector": {
+    "battery_power_positive": {
+      "options": {
+        "charging": "Laden",
+        "discharging": "Ontladen"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "cost_hour": {
+        "name": "Kosten dit uur"
+      },
+      "cost_today": {
+        "name": "Kosten vandaag"
+      },
+      "cost_week": {
+        "name": "Kosten deze week"
+      },
+      "cost_month": {
+        "name": "Kosten deze maand"
+      },
+      "cost_year": {
+        "name": "Kosten dit jaar"
+      },
+      "cost_billing_month": {
+        "name": "Kosten factuurmaand"
+      },
+      "cost_billing_year": {
+        "name": "Kosten factuurjaar"
+      },
+      "cost_total": {
+        "name": "Totale geregistreerde kosten"
+      },
+      "pv_value_today": {
+        "name": "Waarde zonnepanelen vandaag"
+      },
+      "pv_value_month": {
+        "name": "Waarde zonnepanelen deze maand"
+      },
+      "battery_profit_today": {
+        "name": "Batterijwinst vandaag"
+      },
+      "battery_profit_month": {
+        "name": "Batterijwinst deze maand"
+      },
+      "battery_stored_cost": {
+        "name": "Kostenbasis opgeslagen batterijenergie"
+      },
+      "battery_stored_energy": {
+        "name": "Gevolgde opgeslagen batterijenergie"
+      },
+      "battery_average_stored_price": {
+        "name": "Gemiddelde prijs opgeslagen batterijenergie"
+      }
+    }
+  }
+}

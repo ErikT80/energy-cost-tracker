@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement to Energy Cost Tracker
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What energy-accounting problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed behaviour
+      description: Explain what you would like the integration to do.
+    validations:
+      required: true
+  - type: textarea
+    id: portability
+    attributes:
+      label: Supplier/device independence
+      description: If relevant, explain whether the request applies generally or only to one supplier/device.

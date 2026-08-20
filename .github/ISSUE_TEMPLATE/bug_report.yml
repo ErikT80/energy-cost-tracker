@@ -1,0 +1,59 @@
+name: Bug report
+description: Report incorrect behaviour or accounting in Energy Cost Tracker
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. For financial/accounting issues, please include enough anonymised interval data to reproduce the calculation.
+  - type: input
+    id: version
+    attributes:
+      label: Energy Cost Tracker version
+      placeholder: 0.1.0-alpha.1
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: 2026.8.0
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed behaviour and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: entities
+    attributes:
+      label: Relevant entity characteristics
+      description: Include units, state_class/device_class and whether cumulative meters reset. Do not include secrets.
+      render: text
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics / logs
+      description: Paste relevant diagnostics or logs after checking that they contain no private information.
+      render: text
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Grid/import/export accounting
+        - Dynamic prices
+        - Fixed costs / billing periods
+        - Solar valuation
+        - Battery accounting
+        - Sensor reset / replacement
+        - Sidebar panel / history
+        - Setup / config flow
+        - Other
+    validations:
+      required: true

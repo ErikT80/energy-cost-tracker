@@ -1,0 +1,160 @@
+{
+  "title": "Energy Cost Tracker",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Energy Cost Tracker",
+        "description": "Set the currency. All energy and price sources are selected in the next steps.",
+        "data": {
+          "currency": "Currency"
+        }
+      },
+      "grid": {
+        "title": "Grid meters",
+        "description": "Select cumulative energy counters. Counter resets and later entity replacements are handled by the ledger.",
+        "data": {
+          "grid_import_energy": "Cumulative grid import",
+          "grid_export_energy": "Cumulative grid export",
+          "grid_power": "Current grid power (optional)"
+        }
+      },
+      "solar": {
+        "title": "Solar production",
+        "description": "You can select multiple PV systems. Production energy should preferably be cumulative kWh counters.",
+        "data": {
+          "pv_energy": "Cumulative PV production",
+          "pv_power": "Current PV power"
+        }
+      },
+      "battery": {
+        "title": "Home battery",
+        "description": "Battery sensors are optional. Charge/discharge energy counters make financial cost-basis tracking more accurate.",
+        "data": {
+          "battery_charge_energy": "Cumulative battery charge energy",
+          "battery_discharge_energy": "Cumulative battery discharge energy",
+          "battery_power": "Battery power",
+          "battery_soc": "Battery state of charge",
+          "battery_power_positive": "Positive battery power means",
+          "battery_empty_soc": "SOC treated as empty (%)"
+        }
+      },
+      "prices": {
+        "title": "Dynamic prices",
+        "description": "Price sensors may be left empty until your dynamic contract is active. Multipliers and adjustments convert a source into an effective all-in price per kWh.",
+        "data": {
+          "import_price": "Import price sensor",
+          "export_price": "Export price sensor",
+          "import_price_multiplier": "Import price multiplier",
+          "import_price_adjustment": "Import adjustment per kWh",
+          "export_price_multiplier": "Export price multiplier",
+          "export_price_adjustment": "Export adjustment per kWh"
+        }
+      },
+      "billing": {
+        "title": "Fixed costs and billing periods",
+        "description": "Fixed charges are accrued over time. The billing month/year sensors follow your supplier's recurring statement periods.",
+        "data": {
+          "fixed_daily": "Fixed costs per day",
+          "fixed_monthly": "Fixed costs per month",
+          "fixed_annual": "Fixed costs per year",
+          "annual_rebate": "Annual fixed rebate",
+          "billing_month_start_day": "Billing month start day",
+          "billing_year_start_month": "Billing year start month",
+          "billing_year_start_day": "Billing year start day"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Energy Cost Tracker",
+        "description": "Change source entities or tariffs without deleting history. A changed cumulative source starts a new internal meter segment.",
+        "data": {
+          "currency": "Currency",
+          "grid_import_energy": "Cumulative grid import",
+          "grid_export_energy": "Cumulative grid export",
+          "grid_power": "Current grid power",
+          "pv_energy": "Cumulative PV production",
+          "pv_power": "Current PV power",
+          "battery_charge_energy": "Cumulative battery charge energy",
+          "battery_discharge_energy": "Cumulative battery discharge energy",
+          "battery_power": "Battery power",
+          "battery_soc": "Battery SOC",
+          "battery_power_positive": "Positive battery power means",
+          "battery_empty_soc": "SOC treated as empty",
+          "import_price": "Import price",
+          "export_price": "Export price",
+          "import_price_multiplier": "Import multiplier",
+          "import_price_adjustment": "Import adjustment",
+          "export_price_multiplier": "Export multiplier",
+          "export_price_adjustment": "Export adjustment",
+          "fixed_daily": "Fixed costs/day",
+          "fixed_monthly": "Fixed costs/month",
+          "fixed_annual": "Fixed costs/year",
+          "annual_rebate": "Annual rebate",
+          "billing_month_start_day": "Billing month start day",
+          "billing_year_start_month": "Billing year start month",
+          "billing_year_start_day": "Billing year start day"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Energy Cost Tracker is already configured.",
+      "reconfigure_successful": "Energy Cost Tracker was reconfigured successfully."
+    }
+  },
+  "selector": {
+    "battery_power_positive": {
+      "options": {
+        "charging": "Charging",
+        "discharging": "Discharging"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "cost_hour": {
+        "name": "Cost this hour"
+      },
+      "cost_today": {
+        "name": "Cost today"
+      },
+      "cost_week": {
+        "name": "Cost this week"
+      },
+      "cost_month": {
+        "name": "Cost this month"
+      },
+      "cost_year": {
+        "name": "Cost this year"
+      },
+      "cost_billing_month": {
+        "name": "Cost billing month"
+      },
+      "cost_billing_year": {
+        "name": "Cost billing year"
+      },
+      "cost_total": {
+        "name": "Total recorded cost"
+      },
+      "pv_value_today": {
+        "name": "Solar value today"
+      },
+      "pv_value_month": {
+        "name": "Solar value this month"
+      },
+      "battery_profit_today": {
+        "name": "Battery profit today"
+      },
+      "battery_profit_month": {
+        "name": "Battery profit this month"
+      },
+      "battery_stored_cost": {
+        "name": "Battery stored cost basis"
+      },
+      "battery_stored_energy": {
+        "name": "Battery tracked stored energy"
+      },
+      "battery_average_stored_price": {
+        "name": "Battery average stored price"
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "domain": "energy_cost_tracker",
+  "name": "Energy Cost Tracker",
+  "version": "0.1.0-alpha.1",
+  "codeowners": [
+    "@ErikT80"
+  ],
+  "config_flow": true,
+  "single_config_entry": true,
+  "integration_type": "service",
+  "dependencies": [
+    "frontend",
+    "http",
+    "panel_custom"
+  ],
+  "documentation": "https://github.com/ErikT80/energy-cost-tracker",
+  "issue_tracker": "https://github.com/ErikT80/energy-cost-tracker/issues",
+  "iot_class": "calculated"
+}

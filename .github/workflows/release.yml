@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Verify tag matches manifest version
+        shell: bash
+        run: |
+          manifest_version="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          print(json.loads(Path('custom_components/energy_cost_tracker/manifest.json').read_text())['version'])
+          PY
+          )"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$manifest_version" != "$tag_version" ]; then
+            echo "Tag version $tag_version does not match manifest version $manifest_version"
+            exit 1
+          fi
+
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-test.txt
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Build manual-install archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          cd custom_components
+          zip -r "../dist/energy_cost_tracker.zip" energy_cost_tracker -x "*/__pycache__/*" "*.pyc"
+
+      - name: Determine release type
+        id: release_type
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *alpha* || "$GITHUB_REF_NAME" == *beta* || "$GITHUB_REF_NAME" == *rc* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          args=("$GITHUB_REF_NAME" "dist/energy_cost_tracker.zip" --generate-notes --title "$GITHUB_REF_NAME")
+          if [ "${{ steps.release_type.outputs.prerelease }}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${args[@]}"
