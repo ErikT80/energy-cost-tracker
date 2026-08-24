@@ -85,20 +85,6 @@ The ledger stores a baseline for each logical source. If a cumulative sensor dro
 
 The integration automatically registers `/energy-cost-tracker` in the Home Assistant sidebar. The panel uses Home Assistant WebSockets to query the local ledger and supports date and quality filtering.
 
-## GitHub / HACS publication
-
-This repository is prepared for public GitHub and HACS use. Before the first push, replace the owner placeholder once:
-
-```bash
-python scripts/set_github_owner.py ErikT80
-```
-
-Then create a public GitHub repository named `energy-cost-tracker`, enable **Issues**, add a short repository description and add topics such as `home-assistant`, `hacs`, `energy`, `dynamic-tariffs`, `solar` and `battery`. HACS checks these repository-level settings in addition to the files committed here.
-
-The repository contains GitHub Actions for unit tests, Home Assistant hassfest and HACS validation. A tag such as `v0.1.0-alpha.1` triggers the release workflow and produces a manual-install `energy_cost_tracker.zip` asset.
-
-The included brand icon is intentionally generic and can be replaced later without changing the integration domain.
-
 ## Known alpha limitations
 
 - Normal accounting uses a 60-second cadence and closes an interval immediately on a detected tariff state change. A long HA/source outage spanning tariff changes cannot be reconstructed exactly from cumulative meters alone and is therefore marked `estimated`.
