@@ -13,7 +13,7 @@ The project follows [Semantic Versioning](https://semver.org/). While the integr
 - Independent multi-battery accounting.
 - Richer charts and drill-down views in the sidebar panel.
 
-## [0.1.0-alpha.1] - 2026-08-20
+## [0.1.0-alpha.2] - 2026-08-25
 
 ### Added
 - UI-only Config Flow for grid, PV, battery, dynamic prices and billing settings.
@@ -29,3 +29,6 @@ The project follows [Semantic Versioning](https://semver.org/). While the integr
 - Diagnostics support.
 - Dutch and English translations.
 - HACS, hassfest and unit-test GitHub Actions.
+
+### Fixed
+- Fixed Config Flow failure when opening the price and billing steps on Home Assistant versions that reject NumberSelector steps below 0.001.
