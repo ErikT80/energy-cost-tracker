@@ -255,6 +255,7 @@ class EnergyCostRuntime:
         ):
             battery_power *= -1
 
+        current_prices = self._current_prices()
         self.live = {
             "grid_power": state_value(self.config.get(CONF_GRID_POWER)),
             "pv_power": sum(
@@ -265,6 +266,8 @@ class EnergyCostRuntime:
             # Normalized convention in the panel/API: positive means charging.
             "battery_power": battery_power,
             "battery_soc": state_value(self.config.get(CONF_BATTERY_SOC)),
+            "import_price": current_prices.import_price,
+            "export_price": current_prices.export_price,
             "accounting_suspended": self._accounting_suspended,
             "unavailable_energy_sources": list(self._unavailable_energy_sources),
         }

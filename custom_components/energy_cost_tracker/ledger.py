@@ -345,6 +345,12 @@ class Ledger:
               SUM(battery_discharge_cost_basis * fraction) AS battery_discharge_cost_basis,
               SUM(battery_profit * fraction) AS battery_profit,
               SUM(battery_loss_cost * fraction) AS battery_loss_cost,
+              SUM(CASE WHEN import_price IS NOT NULL THEN import_price * seconds * fraction ELSE 0 END)
+                / NULLIF(SUM(CASE WHEN import_price IS NOT NULL THEN seconds * fraction ELSE 0 END), 0)
+                AS avg_import_price,
+              SUM(CASE WHEN export_price IS NOT NULL THEN export_price * seconds * fraction ELSE 0 END)
+                / NULLIF(SUM(CASE WHEN export_price IS NOT NULL THEN seconds * fraction ELSE 0 END), 0)
+                AS avg_export_price,
               SUM(CASE WHEN net_cost IS NULL AND fraction > 0 THEN 1 ELSE 0 END) AS incomplete_cost_intervals,
               SUM(CASE WHEN import_cost IS NULL AND grid_import_kwh > 0 AND fraction > 0 THEN 1 ELSE 0 END) AS incomplete_import_intervals,
               SUM(CASE WHEN export_revenue IS NULL AND grid_export_kwh > 0 AND fraction > 0 THEN 1 ELSE 0 END) AS incomplete_export_intervals,
@@ -536,6 +542,8 @@ class Ledger:
                     if summary.get("export_revenue") is not None
                     else summary.get("known_export_revenue"),
                     "fixed_cost": summary.get("fixed_cost"),
+                    "import_price": summary.get("avg_import_price"),
+                    "export_price": summary.get("avg_export_price"),
                     "financial_complete": bool(summary.get("financial_complete")),
                     "pv_complete": bool(summary.get("pv_complete")),
                     "battery_complete": bool(summary.get("battery_complete")),

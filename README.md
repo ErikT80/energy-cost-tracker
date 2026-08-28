@@ -2,7 +2,7 @@
 
 Energy Cost Tracker is a local-first Home Assistant custom integration for financial energy accounting with dynamic electricity tariffs, fixed charges, supplier billing periods, solar value and home-battery cost basis/profit.
 
-> **Status: 0.1.0-alpha.5.** The data model and ledger are intentionally designed for long-term history, but this release should be validated against real meters and invoices before relying on it for financial decisions.
+> **Status: 0.1.0-alpha.6.** The data model and ledger are intentionally designed for long-term history, but this release should be validated against real meters and invoices before relying on it for financial decisions.
 
 ## Core design
 
@@ -18,7 +18,7 @@ Energy Cost Tracker is a local-first Home Assistant custom integration for finan
 - Multiple PV production entities can be selected.
 - Battery charging can have a mixed solar/grid cost basis using a weighted-average inventory model.
 - Sidebar panel with overview, cost, PV, battery and searchable history pages (date, activity and quality filters).
-- Interactive overview timeline for net cost, PV value and battery profit, with server-side day/hour/quarter-hour aggregation and drill-down zoom.
+- Interactive overview bar chart for net cost, PV value and battery profit, with explicit month/day/hour/quarter views, selectable series and import/export price overlays.
 
 ## Install manually
 
@@ -85,13 +85,13 @@ The ledger stores a baseline for each logical source. If a cumulative sensor dro
 
 ## Sidebar panel
 
-The integration automatically registers `/energy-cost-tracker` in the Home Assistant sidebar. The Overview page includes an interactive month-to-date financial timeline for net cost, PV value and battery profit. It starts at day granularity and drills down to hours and quarter-hours by tapping a bucket; desktop users can also use wheel/drag zoom. The backend aggregates the ledger before sending chart points to the browser, so the panel does not download a month of minute-level rows. History remains searchable by date, activity and quality.
+The integration automatically registers `/energy-cost-tracker` in the Home Assistant sidebar. The Overview page includes an interactive financial bar chart for net cost, PV value and battery profit. A segmented selector switches directly between Month, Day, Hour and Quarter views, while previous/next/now controls navigate the selected period. Month shows monthly buckets for the selected year, Day shows daily buckets for the selected month, Hour shows hourly buckets for the selected day and Quarter shows 15-minute buckets for the selected day. Import and export tariffs are available as optional price-line overlays on a secondary axis, and the current effective prices are shown above the chart. Every series can be toggled independently and the choices are remembered by the browser. The backend aggregates ledger data before sending chart points to the browser, including time-weighted tariff averages, so mobile clients do not need to download raw minute history. History remains searchable by date, activity and quality.
 
 ## GitHub / HACS publication
 
 This repository is prepared for public GitHub and HACS use under `ErikT80/energy-cost-tracker`. Keep **Issues** enabled and repository topics such as `home-assistant`, `hacs`, `energy`, `dynamic-tariffs`, `solar` and `battery`; HACS checks these repository-level settings in addition to the files committed here. Fork maintainers can use `scripts/set_github_owner.py` to replace the repository owner metadata.
 
-The repository contains GitHub Actions for unit tests, Home Assistant hassfest and HACS validation. A tag such as `v0.1.0-alpha.5` triggers the release workflow and produces a manual-install `energy_cost_tracker.zip` asset.
+The repository contains GitHub Actions for unit tests, Home Assistant hassfest and HACS validation. A tag such as `v0.1.0-alpha.6` triggers the release workflow and produces a manual-install `energy_cost_tracker.zip` asset.
 
 The included brand icon is intentionally generic and can be replaced later without changing the integration domain.
 

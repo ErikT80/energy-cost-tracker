@@ -312,3 +312,50 @@ def test_async_backup_barrier_blocks_database_access(tmp_path):
         assert await asyncio.wait_for(pending_read, timeout=1) == "ok"
 
     asyncio.run(scenario())
+
+
+def test_chart_series_exposes_time_weighted_prices(tmp_path):
+    ledger = mod.Ledger(None, tmp_path / "ledger.db")
+    ledger._initialize()
+    ledger._insert_interval(
+        {
+            "start_ts": "2026-08-28T08:00:00+00:00",
+            "end_ts": "2026-08-28T08:05:00+00:00",
+            "seconds": 300.0,
+            "grid_import_kwh": 0.1,
+            "import_price": 0.20,
+            "export_price": 0.10,
+            "import_cost": 0.02,
+            "export_revenue": 0.0,
+            "fixed_cost": 0.0,
+            "net_cost": 0.02,
+            "quality": "exact",
+        }
+    )
+    ledger._insert_interval(
+        {
+            "start_ts": "2026-08-28T08:05:00+00:00",
+            "end_ts": "2026-08-28T08:15:00+00:00",
+            "seconds": 600.0,
+            "grid_import_kwh": 0.2,
+            "import_price": 0.35,
+            "export_price": 0.25,
+            "import_cost": 0.07,
+            "export_revenue": 0.0,
+            "fixed_cost": 0.0,
+            "net_cost": 0.07,
+            "quality": "exact",
+        }
+    )
+
+    result = ledger._chart_series(
+        "2026-08-28T08:00:00+00:00",
+        "2026-08-28T08:15:00+00:00",
+        "quarter",
+        "Europe/Amsterdam",
+    )
+
+    assert len(result["rows"]) == 1
+    row = result["rows"][0]
+    assert round(row["import_price"], 6) == 0.30
+    assert round(row["export_price"], 6) == 0.20

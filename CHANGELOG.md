@@ -12,6 +12,18 @@ The project follows [Semantic Versioning](https://semver.org/). While the integr
 - Historical backfill tooling.
 - Independent multi-battery accounting.
 
+## [0.1.0-alpha.6] - 2026-08-28
+
+### Changed
+- Reworked the Overview financial visualization into a grouped bar chart for net cost, PV value and battery profit.
+- Replaced wheel/drag zoom with explicit Month, Day, Hour and Quarter aggregation views plus previous/next/now controls.
+- Month shows months of the selected year, Day shows days of the selected month, Hour shows hours of the selected day and Quarter shows 15-minute buckets of the selected day; tapping a bar still drills down.
+
+### Added
+- Current effective import and export prices in the chart header.
+- Optional historical import/export tariff overlays using a separate price axis and time-weighted bucket averages.
+- Per-series toggles for net cost, PV value, battery profit, import price and export price; selections persist in browser storage.
+
 ## [0.1.0-alpha.5] - 2026-08-28
 
 ### Fixed

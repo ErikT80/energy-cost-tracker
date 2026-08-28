@@ -12,14 +12,32 @@ class EnergyCostTrackerPanel extends HTMLElement {
     this._chartRange = null;
     this._chartLoading = false;
     this._chartError = null;
-    this._chartTimer = null;
-    this._chartPointer = null;
+    this._chartView = "month";
+    this._chartAnchor = new Date();
+    this._chartSeries = {
+      net_cost: true,
+      pv_value: true,
+      battery_profit: true,
+      import_price: true,
+      export_price: true
+    };
   }
 
   set hass(value) {
     const first = !this._hass;
+    const previous = this._hass;
     this._hass = value;
-    if (first) this.loadSummary();
+    if (first) {
+      this.loadSummary();
+      return;
+    }
+    const cfg = this._summary?.config || {};
+    const watched = [cfg.import_price, cfg.export_price].filter(Boolean);
+    const priceChanged = watched.some(entityId => previous?.states?.[entityId]?.state !== value?.states?.[entityId]?.state);
+    if (priceChanged && this._summary) {
+      this.updateLivePricesFromHass();
+      if (this._tab === "overview") this.render();
+    }
   }
   set narrow(value) { this._narrow = value; }
   set panel(value) { this._panel = value; }
@@ -50,7 +68,7 @@ class EnergyCostTrackerPanel extends HTMLElement {
     return count > 0 ? `⚠ ${count} interval${count === 1 ? "" : "len"} zonder volledige prijsdata` : "";
   }
 
-  async loadChart(start, end, granularity = "auto") {
+  async loadChart(start, end, granularity) {
     if (!this._hass || !start || !end || this._chartLoading) return;
     this._chartLoading = true;
     this._chartError = null;
@@ -70,199 +88,257 @@ class EnergyCostTrackerPanel extends HTMLElement {
     this.render();
   }
 
+  chartViewRange(view = this._chartView, anchor = this._chartAnchor || new Date()) {
+    const d = new Date(anchor);
+    let start;
+    let end;
+    let granularity;
+    if (view === "month") {
+      start = new Date(d.getFullYear(), 0, 1, 0, 0, 0, 0);
+      end = new Date(d.getFullYear() + 1, 0, 1, 0, 0, 0, 0);
+      granularity = "month";
+    } else if (view === "day") {
+      start = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+      end = new Date(d.getFullYear(), d.getMonth() + 1, 1, 0, 0, 0, 0);
+      granularity = "day";
+    } else {
+      start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+      end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0);
+      granularity = view === "quarter" ? "quarter" : "hour";
+    }
+    return { start: start.toISOString(), end: end.toISOString(), granularity };
+  }
+
+  async loadChartView(view = this._chartView, anchor = this._chartAnchor || new Date()) {
+    this._chartView = view;
+    this._chartAnchor = new Date(anchor);
+    const range = this.chartViewRange(view, this._chartAnchor);
+    await this.loadChart(range.start, range.end, range.granularity);
+  }
+
   async resetChart() {
-    const month = this.period("month");
-    if (!month.period_start) return;
-    const now = new Date();
-    const periodEnd = month.period_end ? new Date(month.period_end) : now;
-    const monthStart = new Date(month.period_start);
-    const firstLedger = month.first_ts ? new Date(month.first_ts) : monthStart;
-    const start = new Date(Math.max(monthStart.getTime(), firstLedger.getTime())).toISOString();
-    const end = new Date(Math.min(now.getTime(), periodEnd.getTime())).toISOString();
-    await this.loadChart(start, end, "day");
+    await this.loadChartView(this._chartView || "month", new Date());
   }
 
-  scheduleChart(startMs, endMs, granularity = "auto") {
-    if (!(endMs > startMs)) return;
-    clearTimeout(this._chartTimer);
-    this._chartTimer = setTimeout(() => {
-      this.loadChart(new Date(startMs).toISOString(), new Date(endMs).toISOString(), granularity);
-    }, 160);
+  shiftChart(direction) {
+    const d = new Date(this._chartAnchor || new Date());
+    if (this._chartView === "month") d.setFullYear(d.getFullYear() + direction);
+    else if (this._chartView === "day") d.setMonth(d.getMonth() + direction);
+    else d.setDate(d.getDate() + direction);
+    this.loadChartView(this._chartView, d);
   }
 
-  zoomChart(factor, centerRatio = 0.5) {
-    if (!this._chartRange) return;
-    const start = new Date(this._chartRange.start).getTime();
-    const end = new Date(this._chartRange.end).getTime();
-    const span = end - start;
-    const minSpan = 30 * 60 * 1000;
-    const maxSpan = 5 * 365 * 86400 * 1000;
-    const newSpan = Math.max(minSpan, Math.min(maxSpan, span * factor));
-    const center = start + span * Math.max(0, Math.min(1, centerRatio));
-    let newStart = center - newSpan * centerRatio;
-    let newEnd = newStart + newSpan;
-    const now = Date.now();
-    if (newEnd > now) { newStart -= newEnd - now; newEnd = now; }
-    this.scheduleChart(newStart, newEnd);
-  }
-
-  panChart(direction) {
-    if (!this._chartRange) return;
-    const start = new Date(this._chartRange.start).getTime();
-    const end = new Date(this._chartRange.end).getTime();
-    const span = end - start;
-    let newStart = start + direction * span * 0.6;
-    let newEnd = end + direction * span * 0.6;
-    if (newEnd > Date.now()) { const d = newEnd - Date.now(); newStart -= d; newEnd -= d; }
-    this.loadChart(new Date(newStart).toISOString(), new Date(newEnd).toISOString(), "auto");
+  chartViewTitle() {
+    const d = new Date(this._chartAnchor || new Date());
+    if (this._chartView === "month") return String(d.getFullYear());
+    if (this._chartView === "day") return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "long", year: "numeric" });
   }
 
   chartLabel(value, granularity) {
     const d = new Date(value);
-    if (granularity === "month") return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
-    if (granularity === "day") return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-    if (granularity === "hour") return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    if (granularity === "month") return d.toLocaleDateString(undefined, { month: "short" });
+    if (granularity === "day") return d.toLocaleDateString(undefined, { day: "numeric" });
+    if (granularity === "hour") return d.toLocaleTimeString(undefined, { hour: "2-digit" });
     return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   }
 
-  chartGranularityLabel(value) {
-    return ({ month: "maanden", day: "dagen", hour: "uren", quarter: "kwartieren" })[value] || value || "";
+  priceAmount(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+    const currency = this._summary?.currency || "EUR";
+    try {
+      return new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: 3, maximumFractionDigits: 5 }).format(Number(value));
+    } catch (_) {
+      return `${Number(value).toFixed(4)} ${currency}`;
+    }
+  }
+
+  price(value) {
+    const amount = this.priceAmount(value);
+    return amount === "—" ? amount : `${amount}/kWh`;
+  }
+
+  configuredPrice(entityId, multiplier = 1, adjustment = 0) {
+    const state = entityId ? this._hass?.states?.[entityId] : null;
+    const raw = Number(state?.state);
+    if (!state || !Number.isFinite(raw)) return null;
+    let value = raw;
+    const unit = String(state.attributes?.unit_of_measurement || "").trim().toLowerCase().replaceAll(" ", "");
+    if (unit.includes("/mwh")) value /= 1000;
+    else if (["ct/kwh", "c/kwh", "cent/kwh", "p/kwh", "pence/kwh"].some(token => unit.includes(token))) value /= 100;
+    return value * Number(multiplier ?? 1) + Number(adjustment ?? 0);
+  }
+
+  updateLivePricesFromHass() {
+    const cfg = this._summary?.config || {};
+    if (!this._summary) return;
+    this._summary.live = this._summary.live || {};
+    const importPrice = this.configuredPrice(cfg.import_price, cfg.import_price_multiplier, cfg.import_price_adjustment);
+    const exportPrice = this.configuredPrice(cfg.export_price, cfg.export_price_multiplier, cfg.export_price_adjustment);
+    if (importPrice !== null) this._summary.live.import_price = importPrice;
+    if (exportPrice !== null) this._summary.live.export_price = exportPrice;
+  }
+
+  chartViewSelector() {
+    const labels = { month: "Maand", day: "Dag", hour: "Uur", quarter: "Kwartier" };
+    return `<div class="chartViewSelector">${Object.entries(labels).map(([key,label]) => `<button data-chart-view="${key}" class="${this._chartView === key ? "active" : ""}">${label}</button>`).join("")}</div>`;
+  }
+
+  chartControls() {
+    const range = this.chartViewRange(this._chartView, this._chartAnchor);
+    const disableNext = new Date(range.end).getTime() > Date.now();
+    return `<div class="chartControls"><button id="chartPrev" title="Vorige periode">‹</button><button id="chartNow">Nu</button><button id="chartNext" title="Volgende periode" ${disableNext ? "disabled" : ""}>›</button></div>`;
+  }
+
+  chartSeriesSelector() {
+    const items = [
+      ["net_cost", "Nettokosten", "cost"],
+      ["pv_value", "PV-waarde", "pv"],
+      ["battery_profit", "Batterijwinst", "battery"],
+      ["import_price", "Afnameprijs", "importPrice"],
+      ["export_price", "Terugleverprijs", "exportPrice"]
+    ];
+    return `<div class="chartSeriesSelector">${items.map(([key,label,cls]) => `<button data-chart-series="${key}" class="seriesToggle ${cls} ${this._chartSeries[key] ? "active" : "off"}"><i></i>${label}</button>`).join("")}</div>`;
   }
 
   renderFinanceChart() {
     const chart = this._chart;
     const rows = chart?.rows || [];
-    const granularity = chart?.granularity || "day";
-    const rangeText = this._chartRange
-      ? `${this.date(this._chartRange.start)} – ${this.date(this._chartRange.end)}`
-      : "Huidige maand";
+    const live = this._summary?.live || {};
+    const partial = rows.reduce((n, r) => n + Number(!r.financial_complete || !r.pv_complete || !r.battery_complete), 0);
+    const header = `<div class="chartHead"><div><h2>Financieel verloop</h2><div class="sub">${this.chartViewTitle()}${partial ? ` · ⚠ ${partial} onvolledige punten` : ""}</div></div>${this.chartControls()}</div>
+      <div class="chartToolbar">${this.chartViewSelector()}<div class="priceNow"><span>Afname nu <b>${this.price(live.import_price)}</b></span><span>Teruglevering nu <b>${this.price(live.export_price)}</b></span></div></div>
+      ${this.chartSeriesSelector()}`;
     if (!chart || this._chartLoading) {
-      return `<div class="section chartSection"><div class="chartHead"><div><h2>Financieel verloop</h2><div class="sub">${rangeText}</div></div></div><div class="chartEmpty">${this._chartError || "Grafiek laden…"}</div></div>`;
+      return `<div class="section chartSection">${header}<div class="chartEmpty">${this._chartError || "Grafiek laden…"}</div></div>`;
     }
     if (!rows.length) {
-      return `<div class="section chartSection"><div class="chartHead"><div><h2>Financieel verloop</h2><div class="sub">${rangeText}</div></div>${this.chartControls()}</div><div class="chartEmpty">Geen ledgerdata in dit bereik.</div></div>`;
+      return `<div class="section chartSection">${header}<div class="chartEmpty">Geen ledgerdata in deze periode.</div></div>`;
     }
 
-    const width = 1000, height = 330, left = 66, right = 22, top = 22, bottom = 58;
+    const width = chart.granularity === "quarter" ? Math.max(1000, rows.length * 15 + 142) : 1000, height = 360, left = 70, right = 72, top = 22, bottom = 58;
     const plotW = width - left - right, plotH = height - top - bottom;
-    const startMs = new Date(chart.start).getTime();
-    const endMs = new Date(chart.end).getTime();
-    const values = [];
-    for (const r of rows) for (const k of ["net_cost", "pv_value", "battery_profit"]) {
-      const n = Number(r[k]); if (Number.isFinite(n)) values.push(n);
+    const financeKeys = ["net_cost", "pv_value", "battery_profit"].filter(k => this._chartSeries[k]);
+    const priceKeys = ["import_price", "export_price"].filter(k => this._chartSeries[k]);
+    const financeValues = [];
+    const priceValues = [];
+    for (const r of rows) {
+      for (const k of financeKeys) { const n = Number(r[k]); if (Number.isFinite(n)) financeValues.push(n); }
+      for (const k of priceKeys) { const n = Number(r[k]); if (Number.isFinite(n)) priceValues.push(n); }
     }
-    let min = Math.min(0, ...values), max = Math.max(0, ...values);
-    if (max - min < 0.01) { max += 0.01; min -= 0.01; }
-    const pad = (max - min) * 0.08; max += pad; min -= pad;
-    const x = r => left + ((new Date(r.start).getTime() + new Date(r.end).getTime()) / 2 - startMs) / Math.max(1, endMs - startMs) * plotW;
-    const y = v => top + (max - Number(v)) / (max - min) * plotH;
-    const pathFor = key => {
+
+    let fMin = Math.min(0, ...financeValues), fMax = Math.max(0, ...financeValues);
+    if (fMax - fMin < 0.01) { fMax += 0.01; fMin -= 0.01; }
+    let fPad = (fMax - fMin) * 0.08; fMax += fPad; fMin -= fPad;
+    let pMin = Math.min(0, ...priceValues), pMax = Math.max(0, ...priceValues);
+    if (pMax - pMin < 0.01) { pMax += 0.01; pMin -= 0.01; }
+    let pPad = (pMax - pMin) * 0.08; pMax += pPad; pMin -= pPad;
+
+    const fy = v => top + (fMax - Number(v)) / (fMax - fMin) * plotH;
+    const py = v => top + (pMax - Number(v)) / (pMax - pMin) * plotH;
+    const slotW = plotW / Math.max(1, rows.length);
+    const xCenter = i => left + slotW * (i + 0.5);
+    const barCount = Math.max(1, financeKeys.length);
+    const groupW = Math.min(slotW * 0.78, 48);
+    const barGap = financeKeys.length > 1 ? Math.min(3, groupW * 0.06) : 0;
+    const barW = Math.max(1, (groupW - barGap * (barCount - 1)) / barCount);
+    const zeroY = fy(0);
+    const barClass = { net_cost: "costBar", pv_value: "pvBar", battery_profit: "batteryBar" };
+    const bars = rows.map((r, i) => financeKeys.map((key, j) => {
+      const value = Number(r[key]);
+      if (!Number.isFinite(value)) return "";
+      const x = xCenter(i) - groupW / 2 + j * (barW + barGap);
+      const vy = fy(value);
+      const y = Math.min(zeroY, vy);
+      const h = Math.max(1, Math.abs(zeroY - vy));
+      return `<rect class="chartBar ${barClass[key]}" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barW.toFixed(2)}" height="${h.toFixed(2)}" rx="2"></rect>`;
+    }).join("")).join("");
+
+    const pricePath = key => {
       let d = "", open = false;
-      for (const r of rows) {
-        const v = Number(r[key]);
-        if (!Number.isFinite(v)) { open = false; continue; }
-        d += `${open ? "L" : "M"}${x(r).toFixed(2)},${y(v).toFixed(2)} `; open = true;
-      }
+      rows.forEach((r, i) => {
+        const value = Number(r[key]);
+        if (!Number.isFinite(value)) { open = false; return; }
+        d += `${open ? "L" : "M"}${xCenter(i).toFixed(2)},${py(value).toFixed(2)} `;
+        open = true;
+      });
       return d.trim();
     };
-    const yTicks = Array.from({ length: 5 }, (_, i) => min + (max - min) * i / 4);
-    const xTickCount = Math.min(6, rows.length);
+    const fTicks = Array.from({ length: 5 }, (_, i) => fMin + (fMax - fMin) * i / 4);
+    const pTicks = Array.from({ length: 5 }, (_, i) => pMin + (pMax - pMin) * i / 4);
+    const xTickCount = Math.min(chart.granularity === "quarter" ? 13 : 7, rows.length);
     const xIndexes = [...new Set(Array.from({ length: xTickCount }, (_, i) => Math.round(i * (rows.length - 1) / Math.max(1, xTickCount - 1))))];
-    const partial = rows.reduce((n, r) => n + Number(!r.financial_complete || !r.pv_complete || !r.battery_complete), 0);
+
     return `<div class="section chartSection">
-      <div class="chartHead"><div><h2>Financieel verloop</h2><div class="sub">${rangeText} · ${this.chartGranularityLabel(granularity)}${partial ? ` · ⚠ ${partial} onvolledige punten` : ""}</div></div>${this.chartControls()}</div>
-      <div class="chartLegend"><span class="legendCost"><i></i>Nettokosten</span><span class="legendPv"><i></i>PV-waarde</span><span class="legendBattery"><i></i>Batterijwinst</span></div>
+      ${header}
       <div class="chartBox">
-        <svg id="financeChart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Financieel verloop">
-          ${yTicks.map(v => `<line class="chartGrid" x1="${left}" x2="${width-right}" y1="${y(v)}" y2="${y(v)}"></line><text class="chartYLabel" x="${left-10}" y="${y(v)+4}" text-anchor="end">${this.money(v)}</text>`).join("")}
-          <line class="chartZero" x1="${left}" x2="${width-right}" y1="${y(0)}" y2="${y(0)}"></line>
-          ${xIndexes.map(i => `<text class="chartXLabel" x="${x(rows[i])}" y="${height-22}" text-anchor="middle">${this.chartLabel(rows[i].start, granularity)}</text>`).join("")}
-          <path class="chartLine costLine" d="${pathFor("net_cost")}"></path>
-          <path class="chartLine pvLine" d="${pathFor("pv_value")}"></path>
-          <path class="chartLine batteryLine" d="${pathFor("battery_profit")}"></path>
+        <svg id="financeChart" data-view-width="${width}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Financieel verloop" style="${chart.granularity === "quarter" ? `width:${Math.max(1050, width)}px;max-width:none` : ""}">
+          ${fTicks.map(v => `<line class="chartGrid" x1="${left}" x2="${width-right}" y1="${fy(v)}" y2="${fy(v)}"></line><text class="chartYLabel" x="${left-10}" y="${fy(v)+4}" text-anchor="end">${this.money(v)}</text>`).join("")}
+          ${priceKeys.length ? pTicks.map(v => `<text class="chartPriceYLabel" x="${width-right+10}" y="${py(v)+4}" text-anchor="start">${this.priceAmount(v)}</text>`).join("") : ""}
+          <line class="chartZero" x1="${left}" x2="${width-right}" y1="${zeroY}" y2="${zeroY}"></line>
+          ${xIndexes.map(i => `<text class="chartXLabel" x="${xCenter(i)}" y="${height-22}" text-anchor="middle">${this.chartLabel(rows[i].start, chart.granularity)}</text>`).join("")}
+          ${bars}
+          ${this._chartSeries.import_price ? `<path class="priceLine importPriceLine" d="${pricePath("import_price")}"></path>` : ""}
+          ${this._chartSeries.export_price ? `<path class="priceLine exportPriceLine" d="${pricePath("export_price")}"></path>` : ""}
           <line id="chartCursor" class="chartCursor" x1="0" x2="0" y1="${top}" y2="${height-bottom}" visibility="hidden"></line>
         </svg>
         <div id="chartTooltip" class="chartTooltip" hidden></div>
       </div>
-      <div class="hint chartHint">Tik op een dag om naar uren te gaan en op een uur om kwartieren te tonen. Op desktop kun je ook met het muiswiel of door horizontaal te slepen inzoomen. Waarden met ontbrekende prijsdata worden als bekend subtotaal weergegeven.</div>
+      <div class="hint chartHint">Balken gebruiken de linker as (€ per periode). Prijslijnen gebruiken de rechter as (€ per kWh). Maand toont maanden van het gekozen jaar, Dag de dagen van de gekozen maand, Uur de uren van de gekozen dag en Kwartier de 15-minutenblokken van die dag.</div>
     </div>`;
   }
 
-  chartControls() {
-    return `<div class="chartControls"><button id="chartPrev" title="Vorige periode">‹</button><button id="chartZoomOut" title="Uitzoomen">−</button><button id="chartZoomIn" title="Inzoomen">+</button><button id="chartNext" title="Volgende periode">›</button><button id="chartReset">Deze maand</button></div>`;
-  }
-
   bindChartInteractions() {
-    this.shadowRoot.querySelector("#chartZoomIn")?.addEventListener("click", () => this.zoomChart(0.5));
-    this.shadowRoot.querySelector("#chartZoomOut")?.addEventListener("click", () => this.zoomChart(2));
-    this.shadowRoot.querySelector("#chartPrev")?.addEventListener("click", () => this.panChart(-1));
-    this.shadowRoot.querySelector("#chartNext")?.addEventListener("click", () => this.panChart(1));
-    this.shadowRoot.querySelector("#chartReset")?.addEventListener("click", () => this.resetChart());
+    this.shadowRoot.querySelectorAll("[data-chart-view]").forEach(el => el.addEventListener("click", () => this.loadChartView(el.dataset.chartView, this._chartAnchor)));
+    this.shadowRoot.querySelectorAll("[data-chart-series]").forEach(el => el.addEventListener("click", () => {
+      const key = el.dataset.chartSeries;
+      this._chartSeries[key] = !this._chartSeries[key];
+      try { localStorage.setItem("energy_cost_tracker_chart_series", JSON.stringify(this._chartSeries)); } catch (_) {}
+      this.render();
+    }));
+    this.shadowRoot.querySelector("#chartPrev")?.addEventListener("click", () => this.shiftChart(-1));
+    this.shadowRoot.querySelector("#chartNext")?.addEventListener("click", () => this.shiftChart(1));
+    this.shadowRoot.querySelector("#chartNow")?.addEventListener("click", () => this.resetChart());
 
     const svg = this.shadowRoot.querySelector("#financeChart");
     if (!svg || !this._chart?.rows?.length) return;
     const rows = this._chart.rows;
     const tooltip = this.shadowRoot.querySelector("#chartTooltip");
     const cursor = this.shadowRoot.querySelector("#chartCursor");
-    const left = 66, right = 22, viewW = 1000;
-    const rangeStart = new Date(this._chart.start).getTime();
-    const rangeEnd = new Date(this._chart.end).getTime();
+    const left = 70, right = 72, viewW = Number(svg.dataset.viewWidth || 1000);
     const plotW = viewW - left - right;
+    const slotW = plotW / Math.max(1, rows.length);
 
-    const ratioForEvent = ev => {
+    const indexForEvent = ev => {
       const rect = svg.getBoundingClientRect();
       const vx = (ev.clientX - rect.left) / Math.max(1, rect.width) * viewW;
-      return Math.max(0, Math.min(1, (vx - left) / plotW));
-    };
-    const nearest = ratio => {
-      const target = rangeStart + ratio * (rangeEnd - rangeStart);
-      let best = rows[0], bestD = Infinity;
-      for (const r of rows) {
-        const c = (new Date(r.start).getTime() + new Date(r.end).getTime()) / 2;
-        const d = Math.abs(c - target);
-        if (d < bestD) { bestD = d; best = r; }
-      }
-      return best;
+      return Math.max(0, Math.min(rows.length - 1, Math.floor((vx - left) / Math.max(1, slotW))));
     };
     const showTooltip = ev => {
       if (!tooltip) return;
-      const ratio = ratioForEvent(ev);
-      const r = nearest(ratio);
+      const i = indexForEvent(ev);
+      const r = rows[i];
       const rect = svg.getBoundingClientRect();
-      const center = (new Date(r.start).getTime() + new Date(r.end).getTime()) / 2;
-      const px = left + (center - rangeStart) / Math.max(1, rangeEnd - rangeStart) * plotW;
+      const px = left + slotW * (i + 0.5);
       if (cursor) { cursor.setAttribute("x1", px); cursor.setAttribute("x2", px); cursor.setAttribute("visibility", "visible"); }
       const partial = !r.financial_complete || !r.pv_complete || !r.battery_complete;
-      tooltip.innerHTML = `<b>${this.dateTime(r.start)}</b><br>Nettokosten: ${this.money(r.net_cost)}<br>PV-waarde: ${this.money(r.pv_value)}<br>Batterijwinst: ${this.money(r.battery_profit)}${partial ? "<br><span>⚠ Bekend subtotaal / onvolledig</span>" : ""}`;
+      tooltip.innerHTML = `<b>${this.dateTime(r.start)}</b><br>Nettokosten: ${this.money(r.net_cost)}<br>PV-waarde: ${this.money(r.pv_value)}<br>Batterijwinst: ${this.money(r.battery_profit)}<br>Afnameprijs: ${this.price(r.import_price)}<br>Terugleverprijs: ${this.price(r.export_price)}${partial ? "<br><span>⚠ Bekend subtotaal / onvolledig</span>" : ""}`;
       tooltip.hidden = false;
       let tx = ev.clientX - rect.left + 12;
-      if (tx > rect.width - 190) tx = Math.max(4, tx - 205);
+      if (tx > rect.width - 215) tx = Math.max(4, tx - 230);
       tooltip.style.left = `${tx}px`;
       tooltip.style.top = "12px";
     };
 
-    svg.addEventListener("pointermove", ev => { showTooltip(ev); });
+    svg.addEventListener("pointermove", showTooltip);
     svg.addEventListener("pointerleave", () => { if (tooltip) tooltip.hidden = true; if (cursor) cursor.setAttribute("visibility", "hidden"); });
-    svg.addEventListener("wheel", ev => { ev.preventDefault(); this.zoomChart(ev.deltaY < 0 ? 0.62 : 1.6, ratioForEvent(ev)); }, { passive: false });
-    svg.addEventListener("pointerdown", ev => { this._chartPointer = { x: ev.clientX, y: ev.clientY, ratio: ratioForEvent(ev), type: ev.pointerType }; });
-    svg.addEventListener("pointerup", ev => {
-      const down = this._chartPointer; this._chartPointer = null;
-      if (!down) return;
-      const dx = ev.clientX - down.x, dy = ev.clientY - down.y;
-      if (down.type === "mouse" && Math.abs(dx) > 28 && Math.abs(dx) > Math.abs(dy)) {
-        const a = Math.min(down.ratio, ratioForEvent(ev));
-        const b = Math.max(down.ratio, ratioForEvent(ev));
-        const start = rangeStart + a * (rangeEnd - rangeStart);
-        const end = rangeStart + b * (rangeEnd - rangeStart);
-        if (end - start >= 30 * 60 * 1000) this.loadChart(new Date(start).toISOString(), new Date(end).toISOString(), "auto");
-        return;
-      }
-      if (Math.hypot(dx, dy) > 14) return;
-      const row = nearest(ratioForEvent(ev));
-      const next = ({ month: "day", day: "hour", hour: "quarter" })[this._chart.granularity];
-      if (next) this.loadChart(row.start, row.end, next);
+    svg.addEventListener("click", ev => {
+      const row = rows[indexForEvent(ev)];
+      const nextView = { month: "day", day: "hour", hour: "quarter" }[this._chartView];
+      if (!nextView || !row) return;
+      const center = new Date((new Date(row.start).getTime() + new Date(row.end).getTime()) / 2);
+      this.loadChartView(nextView, center);
     });
-
   }
 
   async loadSummary() {
@@ -271,14 +347,21 @@ class EnergyCostTrackerPanel extends HTMLElement {
     const hadChart = Boolean(this._chartRange);
     try {
       this._summary = await this._hass.callWS({ type: "energy_cost_tracker/summary" });
+      this.updateLivePricesFromHass();
+      if (!hadChart) {
+        try {
+          const stored = JSON.parse(localStorage.getItem("energy_cost_tracker_chart_series") || "null");
+          if (stored && typeof stored === "object") this._chartSeries = { ...this._chartSeries, ...stored };
+        } catch (_) {}
+      }
     } catch (err) { this._error = String(err); }
     this._loading = false;
     this.render();
     if (!this._summary) return;
-    if (!hadChart) {
-      await this.resetChart();
-    } else if (this._chartRange) {
-      await this.loadChart(this._chartRange.start, this._chartRange.end, this._chart?.granularity || "auto");
+    if (!hadChart) await this.resetChart();
+    else {
+      const range = this.chartViewRange(this._chartView, this._chartAnchor);
+      await this.loadChart(range.start, range.end, range.granularity);
     }
   }
 
@@ -369,7 +452,7 @@ class EnergyCostTrackerPanel extends HTMLElement {
     if (!this.shadowRoot) return;
     const content = !this._summary ? `<div class="loading">${this._error || "Laden…"}</div>` : ({overview:()=>this.renderOverview(),costs:()=>this.renderCosts(),solar:()=>this.renderSolar(),battery:()=>this.renderBattery(),history:()=>this.renderHistory()}[this._tab]());
     this.shadowRoot.innerHTML = `<style>
-      :host{display:block;box-sizing:border-box;background:var(--primary-background-color);color:var(--primary-text-color);min-height:100vh;font-family:var(--paper-font-body1_-_font-family,system-ui)}*{box-sizing:border-box}.page{max-width:1500px;margin:auto;padding:20px}.head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.head h1{font-size:26px;margin:0}.refresh{border:0;background:var(--primary-color);color:var(--text-primary-color,#fff);padding:10px 14px;border-radius:10px;cursor:pointer}.tabs{display:flex;gap:6px;overflow:auto;margin-bottom:18px}.tab{border:0;border-radius:999px;padding:9px 14px;background:var(--card-background-color);color:var(--primary-text-color);cursor:pointer;white-space:nowrap}.tab.active{background:var(--primary-color);color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card,.section{background:var(--card-background-color);border-radius:14px;padding:16px;box-shadow:var(--ha-card-box-shadow,0 2px 6px rgba(0,0,0,.12))}.label{font-size:13px;color:var(--secondary-text-color)}.value{font-size:28px;font-weight:700;margin:6px 0}.sub,.hint{font-size:12px;color:var(--secondary-text-color)}.section{margin-top:14px}.section h2{margin:0 0 14px}.live{display:flex;flex-wrap:wrap;gap:18px}.tableWrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--divider-color);white-space:nowrap}th{color:var(--secondary-text-color);font-weight:600}.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:12px}.filters label{display:grid;gap:4px;font-size:12px;color:var(--secondary-text-color)}input,select,button{font:inherit;padding:9px;border-radius:8px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color)}.filters button{background:var(--primary-color);color:#fff;border:0}.quality{padding:3px 7px;border-radius:8px;background:var(--secondary-background-color)}.quality.exact{font-weight:600}.loading{padding:40px;text-align:center}.overviewGrid{margin-top:14px}.chartSection{padding:16px 16px 12px}.chartHead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.chartHead h2{margin:0 0 3px}.chartControls{display:flex;gap:6px;flex-wrap:wrap}.chartControls button{min-width:38px;border:0;background:var(--secondary-background-color);cursor:pointer}.chartControls #chartReset{padding-inline:12px}.chartLegend{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0 2px;font-size:12px;color:var(--secondary-text-color)}.chartLegend span{display:flex;align-items:center;gap:6px}.chartLegend i{display:inline-block;width:16px;height:3px;border-radius:3px}.legendCost i{background:var(--error-color,#db4437)}.legendPv i{background:var(--warning-color,#f9a825)}.legendBattery i{background:var(--success-color,#43a047)}.chartBox{position:relative;width:100%;height:330px;margin-top:4px;overflow:hidden}.chartBox svg{width:100%;height:100%;display:block;touch-action:pan-y;cursor:crosshair}.chartGrid{stroke:var(--divider-color);stroke-width:1;vector-effect:non-scaling-stroke}.chartZero{stroke:var(--secondary-text-color);stroke-width:1.2;opacity:.7;vector-effect:non-scaling-stroke}.chartLine{fill:none;stroke-width:2.4;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}.costLine{stroke:var(--error-color,#db4437)}.pvLine{stroke:var(--warning-color,#f9a825)}.batteryLine{stroke:var(--success-color,#43a047)}.chartYLabel,.chartXLabel{fill:var(--secondary-text-color);font-size:12px}.chartCursor{stroke:var(--primary-text-color);stroke-width:1;opacity:.35;vector-effect:non-scaling-stroke}.chartTooltip{position:absolute;z-index:2;min-width:170px;padding:9px 10px;border-radius:9px;background:var(--card-background-color);box-shadow:0 3px 14px rgba(0,0,0,.35);font-size:12px;pointer-events:none;line-height:1.5;border:1px solid var(--divider-color)}.chartTooltip span{color:var(--warning-color,#f9a825)}.chartEmpty{height:220px;display:grid;place-items:center;color:var(--secondary-text-color)}.chartHint{margin:4px 0 0}@media(max-width:600px){.page{padding:12px}.head h1{font-size:22px}.value{font-size:23px}.chartBox{height:285px}.chartSection{padding:14px 10px 10px}.chartControls{width:100%}.chartControls button{flex:1}.chartYLabel,.chartXLabel{font-size:14px}.chartLegend{gap:10px}}
+      :host{display:block;box-sizing:border-box;background:var(--primary-background-color);color:var(--primary-text-color);min-height:100vh;font-family:var(--paper-font-body1_-_font-family,system-ui)}*{box-sizing:border-box}.page{max-width:1500px;margin:auto;padding:20px}.head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.head h1{font-size:26px;margin:0}.refresh{border:0;background:var(--primary-color);color:var(--text-primary-color,#fff);padding:10px 14px;border-radius:10px;cursor:pointer}.tabs{display:flex;gap:6px;overflow:auto;margin-bottom:18px}.tab{border:0;border-radius:999px;padding:9px 14px;background:var(--card-background-color);color:var(--primary-text-color);cursor:pointer;white-space:nowrap}.tab.active{background:var(--primary-color);color:#fff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card,.section{background:var(--card-background-color);border-radius:14px;padding:16px;box-shadow:var(--ha-card-box-shadow,0 2px 6px rgba(0,0,0,.12))}.label{font-size:13px;color:var(--secondary-text-color)}.value{font-size:28px;font-weight:700;margin:6px 0}.sub,.hint{font-size:12px;color:var(--secondary-text-color)}.section{margin-top:14px}.section h2{margin:0 0 14px}.live{display:flex;flex-wrap:wrap;gap:18px}.tableWrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--divider-color);white-space:nowrap}th{color:var(--secondary-text-color);font-weight:600}.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:12px}.filters label{display:grid;gap:4px;font-size:12px;color:var(--secondary-text-color)}input,select,button{font:inherit;padding:9px;border-radius:8px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color)}.filters button{background:var(--primary-color);color:#fff;border:0}.quality{padding:3px 7px;border-radius:8px;background:var(--secondary-background-color)}.quality.exact{font-weight:600}.loading{padding:40px;text-align:center}.overviewGrid{margin-top:14px}.chartSection{padding:16px 16px 12px}.chartHead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.chartHead h2{margin:0 0 3px}.chartControls{display:flex;gap:6px;flex-wrap:wrap}.chartControls button{min-width:38px;border:0;background:var(--secondary-background-color);cursor:pointer}.chartControls button:disabled{opacity:.35;cursor:default}.chartControls #chartNow{padding-inline:12px}.chartToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px}.chartViewSelector{display:flex;padding:3px;background:var(--secondary-background-color);border-radius:10px;overflow:auto}.chartViewSelector button{border:0;background:transparent;padding:7px 11px;white-space:nowrap;cursor:pointer}.chartViewSelector button.active{background:var(--primary-color);color:#fff}.priceNow{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--secondary-text-color)}.priceNow span{padding:6px 9px;border-radius:9px;background:var(--secondary-background-color)}.priceNow b{color:var(--primary-text-color)}.chartSeriesSelector{display:flex;gap:7px;overflow:auto;padding:10px 0 3px;scrollbar-width:thin}.seriesToggle{display:flex;align-items:center;gap:6px;border:1px solid var(--divider-color);background:var(--card-background-color);padding:6px 9px;white-space:nowrap;cursor:pointer;font-size:12px}.seriesToggle.off{opacity:.42}.seriesToggle i{display:inline-block;width:12px;height:12px;border-radius:3px}.seriesToggle.cost i{background:var(--error-color,#db4437)}.seriesToggle.pv i{background:var(--warning-color,#f9a825)}.seriesToggle.battery i{background:var(--success-color,#43a047)}.seriesToggle.importPrice i{height:3px;border-radius:3px;background:var(--primary-color)}.seriesToggle.exportPrice i{height:3px;border-radius:3px;background:var(--accent-color,#7e57c2)}.chartBox{position:relative;width:100%;height:360px;margin-top:4px;overflow-x:auto;overflow-y:hidden}.chartBox svg{width:100%;height:100%;display:block;touch-action:pan-y;cursor:crosshair}.chartGrid{stroke:var(--divider-color);stroke-width:1;vector-effect:non-scaling-stroke}.chartZero{stroke:var(--secondary-text-color);stroke-width:1.2;opacity:.7;vector-effect:non-scaling-stroke}.chartBar{vector-effect:non-scaling-stroke;opacity:.82}.costBar{fill:var(--error-color,#db4437)}.pvBar{fill:var(--warning-color,#f9a825)}.batteryBar{fill:var(--success-color,#43a047)}.priceLine{fill:none;stroke-width:2.2;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}.importPriceLine{stroke:var(--primary-color)}.exportPriceLine{stroke:var(--accent-color,#7e57c2);stroke-dasharray:6 4}.chartYLabel,.chartXLabel,.chartPriceYLabel{fill:var(--secondary-text-color);font-size:12px}.chartCursor{stroke:var(--primary-text-color);stroke-width:1;opacity:.35;vector-effect:non-scaling-stroke}.chartTooltip{position:absolute;z-index:2;min-width:190px;padding:9px 10px;border-radius:9px;background:var(--card-background-color);box-shadow:0 3px 14px rgba(0,0,0,.35);font-size:12px;pointer-events:none;line-height:1.5;border:1px solid var(--divider-color)}.chartTooltip span{color:var(--warning-color,#f9a825)}.chartEmpty{height:220px;display:grid;place-items:center;color:var(--secondary-text-color)}.chartHint{margin:4px 0 0}@media(max-width:600px){.page{padding:12px}.head h1{font-size:22px}.value{font-size:23px}.chartBox{height:310px}.chartSection{padding:14px 10px 10px}.chartHead{gap:8px}.chartControls{width:100%}.chartControls button{flex:1}.chartToolbar{align-items:stretch}.chartViewSelector{width:100%}.chartViewSelector button{flex:1}.priceNow{width:100%}.priceNow span{flex:1;min-width:145px}.chartYLabel,.chartXLabel,.chartPriceYLabel{font-size:13px}.chartSeriesSelector{margin-inline:-2px}}
     </style><div class="page"><div class="head"><h1>Energy Cost Tracker</h1><button class="refresh" id="refresh">Vernieuwen</button></div><div class="tabs">${[["overview","Overzicht"],["costs","Kosten"],["solar","Zonnepanelen"],["battery","Batterij"],["history","Historie"]].map(([k,l])=>`<button class="tab ${this._tab===k?"active":""}" data-tab="${k}">${l}</button>`).join("")}</div>${content}</div>`;
     this.shadowRoot.querySelectorAll("[data-tab]").forEach(el=>el.addEventListener("click",()=>{this._tab=el.dataset.tab;this.render();if(this._tab==="history"&&!this._history)this.loadHistory();}));
     this.shadowRoot.querySelector("#refresh")?.addEventListener("click",()=>this.loadSummary());
