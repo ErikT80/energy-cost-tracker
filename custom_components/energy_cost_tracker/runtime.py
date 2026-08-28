@@ -1,6 +1,7 @@
 """Runtime accounting engine for Energy Cost Tracker."""
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta
 import hashlib
@@ -112,6 +113,8 @@ class EnergyCostRuntime:
         self._listeners: list[Callable[[], None]] = []
         self._unsubs: list[Callable[[], None]] = []
         self._processing = False
+        self._process_lock = asyncio.Lock()
+        self._backup_in_progress = False
         self._accounting_suspended = False
         self._unavailable_energy_sources: list[str] = []
 
@@ -138,6 +141,44 @@ class EnergyCostRuntime:
         while self._unsubs:
             self._unsubs.pop()()
         await self._async_save_inventory()
+
+    async def async_prepare_backup(self) -> None:
+        """Pause accounting and make the ledger stable for a Home Assistant backup."""
+        if self._backup_in_progress:
+            return
+
+        # Wait for a running accounting tick to finish, then hold the process lock
+        # for the whole backup so source baselines and ledger rows remain coherent.
+        await self._process_lock.acquire()
+        self._backup_in_progress = True
+        self._accounting_suspended = True
+        try:
+            await self._async_save_inventory()
+            await self.ledger.async_prepare_backup()
+            self._refresh_live()
+        except Exception:
+            await self.ledger.async_finish_backup()
+            self._backup_in_progress = False
+            self._accounting_suspended = False
+            self._refresh_live()
+            self._process_lock.release()
+            raise
+
+    async def async_resume_after_backup(self) -> None:
+        """Resume accounting after Home Assistant completed a backup."""
+        if not self._backup_in_progress:
+            return
+        try:
+            await self.ledger.async_finish_backup()
+        finally:
+            self._backup_in_progress = False
+            self._accounting_suspended = False
+            self._refresh_live()
+            self._process_lock.release()
+
+        # Capture the cumulative meter delta that occurred while the backup was
+        # running. A longer gap is automatically marked estimated by normal logic.
+        await self.async_process_tick()
 
     def _configured_energy_entities(self) -> list[str]:
         """Return cumulative energy sources that must be sampled coherently."""
@@ -214,6 +255,7 @@ class EnergyCostRuntime:
         ):
             battery_power *= -1
 
+        current_prices = self._current_prices()
         self.live = {
             "grid_power": state_value(self.config.get(CONF_GRID_POWER)),
             "pv_power": sum(
@@ -224,6 +266,8 @@ class EnergyCostRuntime:
             # Normalized convention in the panel/API: positive means charging.
             "battery_power": battery_power,
             "battery_soc": state_value(self.config.get(CONF_BATTERY_SOC)),
+            "import_price": current_prices.import_price,
+            "export_price": current_prices.export_price,
             "accounting_suspended": self._accounting_suspended,
             "unavailable_energy_sources": list(self._unavailable_energy_sources),
         }
@@ -318,8 +362,14 @@ class EnergyCostRuntime:
         return total
 
     async def async_process_tick(self, initial: bool = False) -> None:
-        if self._processing:
+        if self._processing or self._backup_in_progress:
             return
+
+        await self._process_lock.acquire()
+        if self._processing or self._backup_in_progress:
+            self._process_lock.release()
+            return
+
         self._processing = True
         try:
             now = dt_util.utcnow()
@@ -481,6 +531,7 @@ class EnergyCostRuntime:
             _LOGGER.exception("Error processing Energy Cost Tracker interval")
         finally:
             self._processing = False
+            self._process_lock.release()
 
     async def _async_load_inventory(self) -> None:
         raw = await self.ledger.async_get_meta("battery_inventory")

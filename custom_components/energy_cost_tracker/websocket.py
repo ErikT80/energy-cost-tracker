@@ -10,7 +10,16 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import (
+    CONF_EXPORT_PRICE,
+    CONF_EXPORT_PRICE_ADJUSTMENT,
+    CONF_EXPORT_PRICE_MULTIPLIER,
+    CONF_IMPORT_PRICE,
+    CONF_IMPORT_PRICE_ADJUSTMENT,
+    CONF_IMPORT_PRICE_MULTIPLIER,
+    DEFAULTS,
+    DOMAIN,
+)
 
 
 def _runtime(hass: HomeAssistant):
@@ -35,6 +44,20 @@ async def websocket_summary(hass, connection, msg) -> None:
         "billing_month_start_day": runtime.config.get("billing_month_start_day", 1),
         "billing_year_start_month": runtime.config.get("billing_year_start_month", 1),
         "billing_year_start_day": runtime.config.get("billing_year_start_day", 1),
+        "import_price": runtime.config.get(CONF_IMPORT_PRICE),
+        "export_price": runtime.config.get(CONF_EXPORT_PRICE),
+        "import_price_multiplier": runtime.config.get(
+            CONF_IMPORT_PRICE_MULTIPLIER, DEFAULTS[CONF_IMPORT_PRICE_MULTIPLIER]
+        ),
+        "export_price_multiplier": runtime.config.get(
+            CONF_EXPORT_PRICE_MULTIPLIER, DEFAULTS[CONF_EXPORT_PRICE_MULTIPLIER]
+        ),
+        "import_price_adjustment": runtime.config.get(
+            CONF_IMPORT_PRICE_ADJUSTMENT, DEFAULTS[CONF_IMPORT_PRICE_ADJUSTMENT]
+        ),
+        "export_price_adjustment": runtime.config.get(
+            CONF_EXPORT_PRICE_ADJUSTMENT, DEFAULTS[CONF_EXPORT_PRICE_ADJUSTMENT]
+        ),
     }
     connection.send_result(msg["id"], result)
 
@@ -67,6 +90,35 @@ async def websocket_ledger(hass, connection, msg) -> None:
     connection.send_result(msg["id"], result)
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/chart",
+        vol.Required("start"): str,
+        vol.Required("end"): str,
+        vol.Optional("granularity", default="auto"): vol.In(
+            ["auto", "month", "day", "hour", "quarter"]
+        ),
+    }
+)
+@websocket_api.async_response
+async def websocket_chart(hass, connection, msg) -> None:
+    runtime = _runtime(hass)
+    if runtime is None:
+        connection.send_error(msg["id"], "not_loaded", "Energy Cost Tracker is not loaded")
+        return
+    try:
+        result = await runtime.ledger.async_chart_series(
+            msg["start"],
+            msg["end"],
+            msg["granularity"],
+            hass.config.time_zone,
+        )
+    except (ValueError, OverflowError) as err:
+        connection.send_error(msg["id"], "invalid_range", str(err))
+        return
+    connection.send_result(msg["id"], result)
+
+
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/events", vol.Optional("limit", default=50): vol.All(vol.Coerce(int), vol.Range(min=1, max=500))})
 @websocket_api.async_response
 async def websocket_events(hass, connection, msg) -> None:
@@ -81,4 +133,5 @@ async def websocket_events(hass, connection, msg) -> None:
 def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_summary)
     websocket_api.async_register_command(hass, websocket_ledger)
+    websocket_api.async_register_command(hass, websocket_chart)
     websocket_api.async_register_command(hass, websocket_events)

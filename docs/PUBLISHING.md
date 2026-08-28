@@ -48,11 +48,11 @@ Do not publish the first release until all applicable checks are green. HACS val
 
 ## 5. Create a release
 
-The manifest currently uses `0.1.0-alpha.1`. After the validation workflow succeeds:
+The manifest currently uses `0.1.0-alpha.6`. After the validation workflow succeeds:
 
 ```bash
-git tag v0.1.0-alpha.1
-git push origin v0.1.0-alpha.1
+git tag v0.1.0-alpha.6
+git push origin v0.1.0-alpha.6
 ```
 
 The release workflow verifies that the tag matches `manifest.json`, runs tests, creates `energy_cost_tracker.zip` and publishes a GitHub prerelease.
