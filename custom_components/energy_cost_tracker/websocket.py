@@ -67,6 +67,35 @@ async def websocket_ledger(hass, connection, msg) -> None:
     connection.send_result(msg["id"], result)
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/chart",
+        vol.Required("start"): str,
+        vol.Required("end"): str,
+        vol.Optional("granularity", default="auto"): vol.In(
+            ["auto", "month", "day", "hour", "quarter"]
+        ),
+    }
+)
+@websocket_api.async_response
+async def websocket_chart(hass, connection, msg) -> None:
+    runtime = _runtime(hass)
+    if runtime is None:
+        connection.send_error(msg["id"], "not_loaded", "Energy Cost Tracker is not loaded")
+        return
+    try:
+        result = await runtime.ledger.async_chart_series(
+            msg["start"],
+            msg["end"],
+            msg["granularity"],
+            hass.config.time_zone,
+        )
+    except (ValueError, OverflowError) as err:
+        connection.send_error(msg["id"], "invalid_range", str(err))
+        return
+    connection.send_result(msg["id"], result)
+
+
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/events", vol.Optional("limit", default=50): vol.All(vol.Coerce(int), vol.Range(min=1, max=500))})
 @websocket_api.async_response
 async def websocket_events(hass, connection, msg) -> None:
@@ -81,4 +110,5 @@ async def websocket_events(hass, connection, msg) -> None:
 def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_summary)
     websocket_api.async_register_command(hass, websocket_ledger)
+    websocket_api.async_register_command(hass, websocket_chart)
     websocket_api.async_register_command(hass, websocket_events)

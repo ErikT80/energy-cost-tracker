@@ -144,7 +144,19 @@ class EnergyCostSensor(SensorEntity):
             "period_end": period.get("period_end"),
             "intervals": period.get("intervals", 0),
             "incomplete_cost_intervals": period.get("incomplete_cost_intervals", 0),
+            "incomplete_import_intervals": period.get("incomplete_import_intervals", 0),
+            "incomplete_export_intervals": period.get("incomplete_export_intervals", 0),
+            "incomplete_pv_intervals": period.get("incomplete_pv_intervals", 0),
+            "incomplete_battery_intervals": period.get("incomplete_battery_intervals", 0),
             "non_exact_intervals": period.get("non_exact_intervals", 0),
+            "known_net_cost": period.get("known_net_cost"),
+            "known_import_cost": period.get("known_import_cost"),
+            "known_export_revenue": period.get("known_export_revenue"),
+            "known_pv_value": period.get("known_pv_value"),
+            "known_battery_profit": period.get("known_battery_profit"),
+            "financial_complete": period.get("financial_complete", True),
+            "pv_complete": period.get("pv_complete", True),
+            "battery_complete": period.get("battery_complete", True),
         }
 
     async def async_added_to_hass(self) -> None:

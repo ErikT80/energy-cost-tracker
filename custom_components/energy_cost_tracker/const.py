@@ -3,7 +3,7 @@ from __future__ import annotations
 
 DOMAIN = "energy_cost_tracker"
 NAME = "Energy Cost Tracker"
-VERSION = "0.1.0"
+VERSION = "0.1.0-alpha.5"
 PLATFORMS = ["sensor"]
 
 PANEL_URL = "energy-cost-tracker"

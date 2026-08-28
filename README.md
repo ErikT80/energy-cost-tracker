@@ -2,13 +2,14 @@
 
 Energy Cost Tracker is a local-first Home Assistant custom integration for financial energy accounting with dynamic electricity tariffs, fixed charges, supplier billing periods, solar value and home-battery cost basis/profit.
 
-> **Status: 0.1.0-alpha.1.** The data model and ledger are intentionally designed for long-term history, but this release should be validated against real meters and invoices before relying on it for financial decisions.
+> **Status: 0.1.0-alpha.5.** The data model and ledger are intentionally designed for long-term history, but this release should be validated against real meters and invoices before relying on it for financial decisions.
 
 ## Core design
 
 - UI-only setup through a Home Assistant Config Flow.
 - Supplier-independent: choose existing Home Assistant entities instead of connecting to a specific energy company.
 - Dedicated searchable SQLite ledger stored at `.storage/energy_cost_tracker.db`.
+- Backup-aware SQLite handling: writes/readers are paused and WAL data is checkpointed during Home Assistant backups.
 - Immutable interval bookings: changing a sensor or tariff does not rewrite past rows.
 - Cumulative meter resets are detected and start a new internal segment.
 - Replacing an entity creates a new baseline; old ledger history remains intact.
@@ -17,6 +18,7 @@ Energy Cost Tracker is a local-first Home Assistant custom integration for finan
 - Multiple PV production entities can be selected.
 - Battery charging can have a mixed solar/grid cost basis using a weighted-average inventory model.
 - Sidebar panel with overview, cost, PV, battery and searchable history pages (date, activity and quality filters).
+- Interactive overview timeline for net cost, PV value and battery profit, with server-side day/hour/quarter-hour aggregation and drill-down zoom.
 
 ## Install manually
 
@@ -83,7 +85,15 @@ The ledger stores a baseline for each logical source. If a cumulative sensor dro
 
 ## Sidebar panel
 
-The integration automatically registers `/energy-cost-tracker` in the Home Assistant sidebar. The panel uses Home Assistant WebSockets to query the local ledger and supports date and quality filtering.
+The integration automatically registers `/energy-cost-tracker` in the Home Assistant sidebar. The Overview page includes an interactive month-to-date financial timeline for net cost, PV value and battery profit. It starts at day granularity and drills down to hours and quarter-hours by tapping a bucket; desktop users can also use wheel/drag zoom. The backend aggregates the ledger before sending chart points to the browser, so the panel does not download a month of minute-level rows. History remains searchable by date, activity and quality.
+
+## GitHub / HACS publication
+
+This repository is prepared for public GitHub and HACS use under `ErikT80/energy-cost-tracker`. Keep **Issues** enabled and repository topics such as `home-assistant`, `hacs`, `energy`, `dynamic-tariffs`, `solar` and `battery`; HACS checks these repository-level settings in addition to the files committed here. Fork maintainers can use `scripts/set_github_owner.py` to replace the repository owner metadata.
+
+The repository contains GitHub Actions for unit tests, Home Assistant hassfest and HACS validation. A tag such as `v0.1.0-alpha.5` triggers the release workflow and produces a manual-install `energy_cost_tracker.zip` asset.
+
+The included brand icon is intentionally generic and can be replaced later without changing the integration domain.
 
 ## Known alpha limitations
 
