@@ -23,7 +23,6 @@ def _entity_selector(multiple: bool = False) -> selector.EntitySelector:
 
 def _number(minimum: float, maximum: float, step: float = 0.01) -> selector.NumberSelector:
     selector_step: float | str = "any" if step < 0.001 else step
-
     return selector.NumberSelector(
         selector.NumberSelectorConfig(
             min=minimum,
@@ -32,6 +31,7 @@ def _number(minimum: float, maximum: float, step: float = 0.01) -> selector.Numb
             mode=selector.NumberSelectorMode.BOX,
         )
     )
+
 
 def _optional_with_suggested(schema: dict, key: str, value: Any, field_selector) -> None:
     if value not in (None, "", []):
