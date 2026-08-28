@@ -23,7 +23,9 @@ from .ledger import Ledger
 from .runtime import EnergyCostRuntime
 from .websocket import async_register as async_register_websocket
 
+
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up integration-level APIs and static frontend."""
