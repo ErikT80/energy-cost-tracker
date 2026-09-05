@@ -42,3 +42,25 @@ def test_standard_periods_include_current_hour():
     start, end = mod.standard_periods(now, 1, 1, 1)["hour"]
     assert start == datetime(2026, 8, 20, 18, 0, 0, tzinfo=tz)
     assert end == datetime(2026, 8, 20, 19, 0, 0, tzinfo=tz)
+
+
+def test_billing_month_segments_cover_billing_year_without_gaps():
+    tz = ZoneInfo("Europe/Amsterdam")
+    start = datetime(2026, 8, 26, tzinfo=tz)
+    end = datetime(2027, 8, 26, tzinfo=tz)
+    rows = mod.billing_month_segments(start, end, 26)
+    assert len(rows) == 12
+    assert rows[0][0] == start
+    assert rows[-1][1] == end
+    for previous, current in zip(rows, rows[1:]):
+        assert previous[1] == current[0]
+
+
+def test_billing_month_segments_clip_misaligned_year_edges():
+    tz = ZoneInfo("Europe/Amsterdam")
+    start = datetime(2026, 8, 15, tzinfo=tz)
+    end = datetime(2027, 8, 15, tzinfo=tz)
+    rows = mod.billing_month_segments(start, end, 26)
+    assert rows[0] == (datetime(2026, 8, 15, tzinfo=tz), datetime(2026, 8, 26, tzinfo=tz))
+    assert rows[-1][1] == end
+    assert all(a < b for a, b in rows)

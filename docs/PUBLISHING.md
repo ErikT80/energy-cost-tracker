@@ -1,66 +1,61 @@
-# Publishing to GitHub and HACS
+# Publishing Energy Cost Tracker
 
-## 1. Set the GitHub owner
+Repository: `ErikT80/energy-cost-tracker`
 
-Before the first commit, replace all repository-owner placeholders:
+## Repository prerequisites
 
-```bash
-python scripts/set_github_owner.py YOUR_GITHUB_USERNAME
-```
+Keep the repository public and ensure:
 
-The intended repository name is `energy-cost-tracker`. If you choose another repository name, also update the `documentation` and `issue_tracker` URLs in `custom_components/energy_cost_tracker/manifest.json`.
+- GitHub Issues are enabled;
+- repository description is populated;
+- appropriate topics are configured (for example `home-assistant`, `hacs`, `energy`, `dynamic-tariffs`, `solar`, `battery`);
+- `hacs.json` is valid;
+- `manifest.json` is valid;
+- HACS validation and Home Assistant hassfest are green;
+- a real GitHub Release exists for the version being submitted.
 
-## 2. Create the public repository
+## Release candidate
 
-Create a public GitHub repository with:
-
-- Name: `energy-cost-tracker`
-- Issues: enabled
-- Description: `Financial energy accounting for Home Assistant with dynamic tariffs, solar and battery valuation.`
-- Suggested topics: `home-assistant`, `hacs`, `energy`, `dynamic-tariffs`, `solar`, `battery`, `smart-home`
-
-HACS validates repository-level description, topics and issue availability in addition to committed files.
-
-## 3. Push the repository
-
-Example with Git:
+For `0.1.0-rc.1`:
 
 ```bash
-git init -b main
-git add .
-git commit -m "Initial Energy Cost Tracker alpha"
-git remote add origin git@github.com:YOUR_GITHUB_USERNAME/energy-cost-tracker.git
-git push -u origin main
+git tag v0.1.0-rc.1
+git push origin v0.1.0-rc.1
 ```
 
-HTTPS is also fine if that is how Git/Codex is authenticated.
+The release workflow verifies that the tag matches `manifest.json`, runs tests/import smoke, builds `energy_cost_tracker.zip` and creates a prerelease.
 
-## 4. Check GitHub Actions
+Release-candidate users should install the repository through HACS **Custom repositories** until the first stable release has been validated.
 
-The `Validate` workflow runs:
+## First stable release
 
-- unit tests
-- Python compile check
-- Home Assistant hassfest
-- HACS validation
+After every item in `docs/RELEASE_CHECKLIST.md` that is applicable has been completed:
 
-Do not publish the first release until all applicable checks are green. HACS validation cannot fully succeed locally because some checks depend on the public GitHub repository metadata.
+1. Change the version in `manifest.json` and `const.py` to `0.1.0`.
+2. Update `CHANGELOG.md`.
+3. Merge through the protected `main` branch with all required checks green.
+4. Tag and push `v0.1.0`.
+5. Confirm the release workflow created a non-prerelease GitHub Release and attached `energy_cost_tracker.zip`.
 
-## 5. Create a release
+## Request inclusion in the default HACS store
 
-The manifest currently uses `0.1.0-alpha.6`. After the validation workflow succeeds:
+After `v0.1.0` exists as a GitHub Release:
+
+1. Fork `hacs/default` to the maintainer's personal GitHub account.
+2. Create a branch from its `master` branch.
+3. Add `"ErikT80/energy-cost-tracker"` to the alphabetically sorted `integration` JSON list.
+4. Open a pull request back to `hacs/default`.
+5. Complete the HACS pull-request template and allow maintainer edits.
+6. Resolve genuine validation failures; HACS maintainers perform the final review/merge.
+
+Default-store review can take time. The custom-repository installation path remains usable while review is pending.
+
+## Forks
+
+Fork maintainers can use:
 
 ```bash
-git tag v0.1.0-alpha.6
-git push origin v0.1.0-alpha.6
+python scripts/set_github_owner.py NEW_OWNER
 ```
 
-The release workflow verifies that the tag matches `manifest.json`, runs tests, creates `energy_cost_tracker.zip` and publishes a GitHub prerelease.
-
-## 6. Add as a custom HACS repository
-
-During alpha testing, users can add the GitHub repository to HACS as a custom integration repository. This does not require acceptance into the HACS default store.
-
-## 7. HACS default-store submission later
-
-Do this only after the integration has been tested by multiple users and is no longer an early alpha. Current HACS publication guidance requires a public GitHub repository, passing HACS + hassfest actions, a release, suitable repository metadata and brand assets.
+to update repository-owner metadata where supported by the script.

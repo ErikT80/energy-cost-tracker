@@ -79,3 +79,12 @@ def test_uncovered_discharge_invalidates_cost_basis_until_reconciled():
     assert result.battery_discharge_cost_basis is None
     assert result.battery_profit is None
     assert inv.basis_known is False
+
+
+def test_mark_empty_resolves_unknown_inventory():
+    inv = mod.BatteryInventory(energy_kwh=1.25, cost_basis=0.17, basis_known=False)
+    discarded = inv.mark_empty()
+    assert round(discarded, 6) == 0.17
+    assert inv.energy_kwh == 0.0
+    assert inv.cost_basis == 0.0
+    assert inv.basis_known is True

@@ -43,8 +43,8 @@ def _optional_with_suggested(schema: dict, key: str, value: Any, field_selector)
 class EnergyCostTrackerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # noqa: F405
     """Handle Energy Cost Tracker configuration."""
 
-    VERSION = 1
-    MINOR_VERSION = 0
+    VERSION = CONFIG_ENTRY_VERSION  # noqa: F405
+    MINOR_VERSION = CONFIG_ENTRY_MINOR_VERSION  # noqa: F405
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
@@ -102,10 +102,10 @@ class EnergyCostTrackerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # 
             step_id="battery",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(CONF_BATTERY_CHARGE_ENERGY): _entity_selector(),  # noqa: F405
-                    vol.Optional(CONF_BATTERY_DISCHARGE_ENERGY): _entity_selector(),  # noqa: F405
-                    vol.Optional(CONF_BATTERY_POWER): _entity_selector(),  # noqa: F405
-                    vol.Optional(CONF_BATTERY_SOC): _entity_selector(),  # noqa: F405
+                    vol.Optional(CONF_BATTERY_CHARGE_ENERGY, default=[]): _entity_selector(multiple=True),  # noqa: F405
+                    vol.Optional(CONF_BATTERY_DISCHARGE_ENERGY, default=[]): _entity_selector(multiple=True),  # noqa: F405
+                    vol.Optional(CONF_BATTERY_POWER, default=[]): _entity_selector(multiple=True),  # noqa: F405
+                    vol.Optional(CONF_BATTERY_SOC, default=[]): _entity_selector(multiple=True),  # noqa: F405
                     vol.Required(CONF_BATTERY_POWER_POSITIVE, default=DEFAULTS[CONF_BATTERY_POWER_POSITIVE]): selector.SelectSelector(  # noqa: F405
                         selector.SelectSelectorConfig(
                             options=[BATTERY_POSITIVE_CHARGING, BATTERY_POSITIVE_DISCHARGING],  # noqa: F405
@@ -159,8 +159,11 @@ class EnergyCostTrackerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # 
         entry = self._get_reconfigure_entry()
         current = dict(entry.data)
         if user_input is not None:
-            # Replace the full configuration so optional sensors can genuinely be
-            # removed. The ledger is not replaced and survives all source changes.
+            # Replace the visible source/tariff configuration so optional sensors can
+            # genuinely be removed. Fixed-cost base values are intentionally preserved:
+            # later changes are managed as dated rows from the sidebar Settings tab.
+            for key in (CONF_FIXED_DAILY, CONF_FIXED_MONTHLY, CONF_FIXED_ANNUAL, CONF_ANNUAL_REBATE):  # noqa: F405
+                user_input[key] = current.get(key, DEFAULTS.get(key, 0.0))  # noqa: F405
             return self.async_update_reload_and_abort(entry, data=user_input)
 
         schema: dict[Any, Any] = {
@@ -171,7 +174,12 @@ class EnergyCostTrackerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # 
             _optional_with_suggested(schema, key, current.get(key), _entity_selector())
         _optional_with_suggested(schema, CONF_PV_ENERGY, current.get(CONF_PV_ENERGY, []), _entity_selector(True))  # noqa: F405
         _optional_with_suggested(schema, CONF_PV_POWER, current.get(CONF_PV_POWER, []), _entity_selector(True))  # noqa: F405
-        for key in (CONF_BATTERY_CHARGE_ENERGY, CONF_BATTERY_DISCHARGE_ENERGY, CONF_BATTERY_POWER, CONF_BATTERY_SOC, CONF_IMPORT_PRICE, CONF_EXPORT_PRICE):  # noqa: F405
+        for key in (CONF_BATTERY_CHARGE_ENERGY, CONF_BATTERY_DISCHARGE_ENERGY, CONF_BATTERY_POWER, CONF_BATTERY_SOC):  # noqa: F405
+            current_value = current.get(key, [])
+            if current_value and not isinstance(current_value, list):
+                current_value = [current_value]
+            _optional_with_suggested(schema, key, current_value, _entity_selector(True))
+        for key in (CONF_IMPORT_PRICE, CONF_EXPORT_PRICE):  # noqa: F405
             _optional_with_suggested(schema, key, current.get(key), _entity_selector())
 
         schema.update(
@@ -184,10 +192,6 @@ class EnergyCostTrackerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # 
                 vol.Required(CONF_IMPORT_PRICE_ADJUSTMENT, default=current.get(CONF_IMPORT_PRICE_ADJUSTMENT, 0.0)): _number(-10, 10, 0.0001),  # noqa: F405
                 vol.Required(CONF_EXPORT_PRICE_MULTIPLIER, default=current.get(CONF_EXPORT_PRICE_MULTIPLIER, 1.0)): _number(-1000, 1000, 0.001),  # noqa: F405
                 vol.Required(CONF_EXPORT_PRICE_ADJUSTMENT, default=current.get(CONF_EXPORT_PRICE_ADJUSTMENT, 0.0)): _number(-10, 10, 0.0001),  # noqa: F405
-                vol.Required(CONF_FIXED_DAILY, default=current.get(CONF_FIXED_DAILY, 0.0)): _number(-1000, 1000, 0.0001),  # noqa: F405
-                vol.Required(CONF_FIXED_MONTHLY, default=current.get(CONF_FIXED_MONTHLY, 0.0)): _number(-10000, 10000, 0.01),  # noqa: F405
-                vol.Required(CONF_FIXED_ANNUAL, default=current.get(CONF_FIXED_ANNUAL, 0.0)): _number(-100000, 100000, 0.01),  # noqa: F405
-                vol.Required(CONF_ANNUAL_REBATE, default=current.get(CONF_ANNUAL_REBATE, 0.0)): _number(0, 100000, 0.01),  # noqa: F405
                 vol.Required(CONF_BILLING_MONTH_START_DAY, default=current.get(CONF_BILLING_MONTH_START_DAY, 1)): _number(1, 31, 1),  # noqa: F405
                 vol.Required(CONF_BILLING_YEAR_START_MONTH, default=current.get(CONF_BILLING_YEAR_START_MONTH, 1)): _number(1, 12, 1),  # noqa: F405
                 vol.Required(CONF_BILLING_YEAR_START_DAY, default=current.get(CONF_BILLING_YEAR_START_DAY, 1)): _number(1, 31, 1),  # noqa: F405

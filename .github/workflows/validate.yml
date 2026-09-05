@@ -17,26 +17,63 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: requirements-test.txt
       - name: Install test dependencies
         run: python -m pip install -r requirements-test.txt
-      - name: Run unit tests
+      - name: Run unit and release-contract tests
         run: python -m pytest -q
       - name: Compile Python sources
         run: python -m compileall -q custom_components/energy_cost_tracker
+      - name: Validate frontend JavaScript syntax
+        run: node --check custom_components/energy_cost_tracker/frontend/energy-cost-tracker-panel.js
+      - name: Validate JSON files
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in Path("custom_components/energy_cost_tracker").rglob("*.json"):
+              json.loads(path.read_text())
+              print(f"OK {path}")
+          json.loads(Path("hacs.json").read_text())
+          PY
+
+  ha-import-compatibility:
+    name: HA import (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: minimum 2026.8.0
+            package: homeassistant==2026.8.0
+          - label: latest stable
+            package: homeassistant
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install Home Assistant
+        run: python -m pip install "${{ matrix.package }}"
+      - name: Import-smoke custom integration
+        run: python scripts/ha_import_smoke.py
 
   hassfest:
     name: Home Assistant hassfest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Run hassfest
         uses: home-assistant/actions/hassfest@master
 

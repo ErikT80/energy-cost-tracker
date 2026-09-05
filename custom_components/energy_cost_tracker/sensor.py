@@ -3,15 +3,44 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
+from .const import (
+    CONF_BATTERY_CHARGE_ENERGY,
+    CONF_BATTERY_DISCHARGE_ENERGY,
+    CONF_BATTERY_POWER,
+    CONF_PV_ENERGY,
+    CONF_PV_POWER,
+    DOMAIN,
+)
+
+
+def _entity_ids(value: Any) -> list[str]:
+    """Normalize legacy single-entity and current multi-select config."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return [str(entity_id) for entity_id in value if entity_id]
+
+
+def _has_pv_config(config: dict[str, Any]) -> bool:
+    return bool(_entity_ids(config.get(CONF_PV_ENERGY)) or _entity_ids(config.get(CONF_PV_POWER)))
+
+
+def _has_battery_config(config: dict[str, Any]) -> bool:
+    # SOC alone is only an optional technical helper and does not constitute a battery system.
+    return any(
+        _entity_ids(config.get(key))
+        for key in (CONF_BATTERY_CHARGE_ENERGY, CONF_BATTERY_DISCHARGE_ENERGY, CONF_BATTERY_POWER)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +50,7 @@ class SensorDescription:
     path: tuple[str, ...]
     unit_kind: str = "money"
     icon: str | None = None
+    asset: str = "core"  # core | pv | battery
 
 
 SENSORS = (
@@ -32,14 +62,26 @@ SENSORS = (
     SensorDescription("cost_billing_month", "cost_billing_month", ("periods", "billing_month", "net_cost"), icon="mdi:receipt-text"),
     SensorDescription("cost_billing_year", "cost_billing_year", ("periods", "billing_year", "net_cost"), icon="mdi:file-document-outline"),
     SensorDescription("cost_total", "cost_total", ("periods", "total", "net_cost"), icon="mdi:cash-multiple"),
-    SensorDescription("pv_value_today", "pv_value_today", ("periods", "today", "pv_value"), icon="mdi:solar-power"),
-    SensorDescription("pv_value_month", "pv_value_month", ("periods", "month", "pv_value"), icon="mdi:solar-panel-large"),
-    SensorDescription("battery_profit_today", "battery_profit_today", ("periods", "today", "battery_profit"), icon="mdi:battery-arrow-down"),
-    SensorDescription("battery_profit_month", "battery_profit_month", ("periods", "month", "battery_profit"), icon="mdi:battery-sync"),
-    SensorDescription("battery_stored_cost", "battery_stored_cost", ("battery_inventory", "cost_basis"), unit_kind="current_money", icon="mdi:battery-lock"),
-    SensorDescription("battery_stored_energy", "battery_stored_energy", ("battery_inventory", "energy_kwh"), unit_kind="energy", icon="mdi:battery"),
-    SensorDescription("battery_average_stored_price", "battery_average_stored_price", ("battery_inventory", "average_price"), unit_kind="price", icon="mdi:battery-clock"),
+    SensorDescription("pv_value_today", "pv_value_today", ("periods", "today", "pv_value"), icon="mdi:solar-power", asset="pv"),
+    SensorDescription("pv_value_month", "pv_value_month", ("periods", "month", "pv_value"), icon="mdi:solar-panel-large", asset="pv"),
+    SensorDescription("battery_profit_today", "battery_profit_today", ("periods", "today", "battery_profit"), icon="mdi:battery-arrow-down", asset="battery"),
+    SensorDescription("battery_profit_month", "battery_profit_month", ("periods", "month", "battery_profit"), icon="mdi:battery-sync", asset="battery"),
+    SensorDescription("battery_stored_cost", "battery_stored_cost", ("battery_inventory", "cost_basis"), unit_kind="current_money", icon="mdi:battery-lock", asset="battery"),
+    SensorDescription("battery_stored_energy", "battery_stored_energy", ("battery_inventory", "energy_kwh"), unit_kind="energy", icon="mdi:battery", asset="battery"),
+    SensorDescription("battery_average_stored_price", "battery_average_stored_price", ("battery_inventory", "average_price"), unit_kind="price", icon="mdi:battery-clock", asset="battery"),
 )
+
+
+def _enabled_descriptions(config: dict[str, Any]) -> list[SensorDescription]:
+    has_pv = _has_pv_config(config)
+    has_battery = _has_battery_config(config)
+    return [
+        desc
+        for desc in SENSORS
+        if desc.asset == "core"
+        or (desc.asset == "pv" and has_pv)
+        or (desc.asset == "battery" and has_battery)
+    ]
 
 
 async def async_setup_entry(
@@ -48,7 +90,22 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     runtime = entry.runtime_data
-    async_add_entities([EnergyCostSensor(entry, runtime, desc) for desc in SENSORS])
+    enabled = _enabled_descriptions(runtime.config)
+    enabled_keys = {desc.key for desc in enabled}
+
+    # A reconfigure may remove PV/battery inputs. Remove their stale registry
+    # entities rather than leaving unavailable historical shells behind. The
+    # financial ledger itself is deliberately untouched.
+    registry = er.async_get(hass)
+    for desc in SENSORS:
+        if desc.key in enabled_keys:
+            continue
+        unique_id = f"{entry.entry_id}_{desc.key}"
+        entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+        if entity_id is not None:
+            registry.async_remove(entity_id)
+
+    async_add_entities([EnergyCostSensor(entry, runtime, desc) for desc in enabled])
 
 
 class EnergyCostSensor(SensorEntity):
@@ -68,8 +125,6 @@ class EnergyCostSensor(SensorEntity):
             self._attr_state_class = SensorStateClass.TOTAL
         elif description.unit_kind == "current_money":
             # Current battery inventory valuation is not an accumulated total.
-            # Home Assistant only allows MONETARY with TOTAL, so leave device/state
-            # class unset rather than publishing misleading long-term statistics.
             pass
         elif description.unit_kind == "energy":
             self._attr_device_class = SensorDeviceClass.ENERGY_STORAGE
@@ -95,9 +150,30 @@ class EnergyCostSensor(SensorEntity):
             data = data.get(part)
         return data
 
+    def _period(self) -> dict[str, Any] | None:
+        if self.description.path[:1] != ("periods",):
+            return None
+        return self.runtime.summary.get("periods", {}).get(self.description.path[1], {})
+
+    def _known_period_value(self) -> Any:
+        """Return the defensible known subtotal when the definitive total is incomplete."""
+        period = self._period()
+        if period is None:
+            return self._value()
+        field = self.description.path[2]
+        fallback = {
+            "net_cost": "known_net_cost",
+            "pv_value": "known_pv_value",
+            "battery_profit": "known_battery_profit",
+        }.get(field)
+        value = period.get(field)
+        if value is not None or fallback is None:
+            return value
+        return period.get(fallback)
+
     @property
     def native_value(self):
-        value = self._value()
+        value = self._known_period_value()
         if value is None:
             return None
         return round(float(value), 6)
@@ -139,16 +215,31 @@ class EnergyCostSensor(SensorEntity):
             return None
         period_name = self.description.path[1]
         period = self.runtime.summary.get("periods", {}).get(period_name, {})
+        field = self.description.path[2]
+        if field == "pv_value":
+            complete = bool(period.get("pv_complete", True))
+            incomplete_intervals = int(period.get("incomplete_pv_intervals", 0) or 0)
+        elif field == "battery_profit":
+            complete = bool(period.get("battery_complete", True))
+            incomplete_intervals = int(period.get("incomplete_battery_intervals", 0) or 0)
+        else:
+            complete = bool(period.get("financial_complete", True))
+            incomplete_intervals = int(period.get("incomplete_cost_intervals", 0) or 0)
+        non_exact = int(period.get("non_exact_intervals", 0) or 0)
+        data_quality = "incomplete" if not complete else ("non_exact" if non_exact else "exact")
         return {
             "period_start": period.get("period_start"),
             "period_end": period.get("period_end"),
             "intervals": period.get("intervals", 0),
+            "data_quality": data_quality,
+            "known_subtotal": not complete,
+            "incomplete_intervals": incomplete_intervals,
             "incomplete_cost_intervals": period.get("incomplete_cost_intervals", 0),
             "incomplete_import_intervals": period.get("incomplete_import_intervals", 0),
             "incomplete_export_intervals": period.get("incomplete_export_intervals", 0),
             "incomplete_pv_intervals": period.get("incomplete_pv_intervals", 0),
             "incomplete_battery_intervals": period.get("incomplete_battery_intervals", 0),
-            "non_exact_intervals": period.get("non_exact_intervals", 0),
+            "non_exact_intervals": non_exact,
             "known_net_cost": period.get("known_net_cost"),
             "known_import_cost": period.get("known_import_cost"),
             "known_export_revenue": period.get("known_export_revenue"),
