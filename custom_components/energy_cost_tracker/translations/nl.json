@@ -28,14 +28,14 @@
       },
       "battery": {
         "title": "Thuisbatterij",
-        "description": "Batterijsensoren zijn optioneel. Laad- en ontlaadtellers maken de cost-basisberekening nauwkeuriger.",
+        "description": "Batterijsensoren zijn optioneel en je kunt meerdere batterijen selecteren. Laad- en ontlaadtellers worden gecombineerd tot één batterijsysteem. SOC is optioneel en wordt alleen technisch gebruikt om te herkennen dat de onbekende beginvoorraad leeg is; SOC wordt niet gebruikt om energie of winst te berekenen.",
         "data": {
-          "battery_charge_energy": "Cumulatieve laadenergie",
-          "battery_discharge_energy": "Cumulatieve ontlaadenergie",
-          "battery_power": "Batterijvermogen",
-          "battery_soc": "Batterij-SOC",
+          "battery_charge_energy": "Cumulatieve laadenergie (meerdere mogelijk)",
+          "battery_discharge_energy": "Cumulatieve ontlaadenergie (meerdere mogelijk)",
+          "battery_power": "Batterijvermogen (meerdere mogelijk)",
+          "battery_soc": "SOC-hulpsensor voor automatische leegdetectie (optioneel, meerdere mogelijk)",
           "battery_power_positive": "Positief batterijvermogen betekent",
-          "battery_empty_soc": "SOC beschouwd als leeg (%)"
+          "battery_empty_soc": "Leeggrens voor SOC-hulpsensor (%)"
         }
       },
       "prices": {
@@ -52,7 +52,7 @@
       },
       "billing": {
         "title": "Vaste kosten en facturatie",
-        "description": "Vaste kosten worden tijdsevenredig opgebouwd. De factuurmaand en het factuurjaar volgen de terugkerende perioden van je leverancier.",
+        "description": "Vul de vaste kosten in die gelden wanneer de tracking start. Latere wijzigingen in vaste kosten plan je met een ingangsdatum via de Instellingen-tab van Energy Cost Tracker. De factuurmaand en het factuurjaar volgen de terugkerende perioden van je leverancier.",
         "data": {
           "fixed_daily": "Vaste kosten per dag",
           "fixed_monthly": "Vaste kosten per maand",
@@ -65,7 +65,7 @@
       },
       "reconfigure": {
         "title": "Energy Cost Tracker opnieuw configureren",
-        "description": "Wijzig sensoren of tarieven zonder historie te verwijderen. Een gewijzigde cumulatieve sensor start automatisch een nieuw intern tellersegment.",
+        "description": "Wijzig sensoren of dynamische tarieven zonder historie te verwijderen. Wijzigingen in vaste kosten plan je met een ingangsdatum via de Instellingen-tab van Energy Cost Tracker. Een gewijzigde cumulatieve sensor start automatisch een nieuw intern tellersegment.",
         "data": {
           "currency": "Valuta",
           "grid_import_energy": "Cumulatieve netafname",
@@ -73,12 +73,12 @@
           "grid_power": "Actueel netvermogen",
           "pv_energy": "Cumulatieve PV-productie",
           "pv_power": "Actueel PV-vermogen",
-          "battery_charge_energy": "Cumulatieve laadenergie",
-          "battery_discharge_energy": "Cumulatieve ontlaadenergie",
-          "battery_power": "Batterijvermogen",
-          "battery_soc": "Batterij-SOC",
+          "battery_charge_energy": "Cumulatieve laadenergie (meerdere mogelijk)",
+          "battery_discharge_energy": "Cumulatieve ontlaadenergie (meerdere mogelijk)",
+          "battery_power": "Batterijvermogen (meerdere mogelijk)",
+          "battery_soc": "SOC-hulpsensor voor automatische leegdetectie (optioneel)",
           "battery_power_positive": "Positief batterijvermogen betekent",
-          "battery_empty_soc": "SOC beschouwd als leeg",
+          "battery_empty_soc": "Leeggrens voor SOC-hulpsensor",
           "import_price": "Afnameprijs",
           "export_price": "Terugleverprijs",
           "import_price_multiplier": "Multiplier afnameprijs",

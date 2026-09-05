@@ -13,12 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
 
       - name: Verify tag matches manifest version
         shell: bash
@@ -38,8 +40,18 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install -r requirements-test.txt
 
-      - name: Run tests
-        run: python -m pytest -q
+      - name: Run release checks
+        shell: bash
+        run: |
+          python -m pytest -q
+          python -m compileall -q custom_components/energy_cost_tracker
+          node --check custom_components/energy_cost_tracker/frontend/energy-cost-tracker-panel.js
+
+      - name: Install minimum supported Home Assistant
+        run: python -m pip install "homeassistant==2026.8.0"
+
+      - name: Import-smoke integration on minimum Home Assistant
+        run: python scripts/ha_import_smoke.py
 
       - name: Build manual-install archive
         shell: bash

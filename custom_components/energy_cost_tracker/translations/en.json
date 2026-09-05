@@ -28,14 +28,14 @@
       },
       "battery": {
         "title": "Home battery",
-        "description": "Battery sensors are optional. Charge/discharge energy counters make financial cost-basis tracking more accurate.",
+        "description": "Battery sensors are optional and multiple batteries can be selected. Charge/discharge counters are combined into one battery system. SOC is optional and is used only as a technical helper to detect that the initial unknown battery inventory has become empty; it is not used to calculate energy or profit.",
         "data": {
-          "battery_charge_energy": "Cumulative battery charge energy",
-          "battery_discharge_energy": "Cumulative battery discharge energy",
-          "battery_power": "Battery power",
-          "battery_soc": "Battery state of charge",
+          "battery_charge_energy": "Cumulative battery charge energy (multiple allowed)",
+          "battery_discharge_energy": "Cumulative battery discharge energy (multiple allowed)",
+          "battery_power": "Battery power (multiple allowed)",
+          "battery_soc": "SOC helper for automatic empty detection (optional, multiple allowed)",
           "battery_power_positive": "Positive battery power means",
-          "battery_empty_soc": "SOC treated as empty (%)"
+          "battery_empty_soc": "SOC helper empty threshold (%)"
         }
       },
       "prices": {
@@ -52,7 +52,7 @@
       },
       "billing": {
         "title": "Fixed costs and billing periods",
-        "description": "Fixed charges are accrued over time. The billing month/year sensors follow your supplier's recurring statement periods.",
+        "description": "Enter the fixed costs that apply when tracking starts. Later fixed-cost changes can be scheduled by effective date in the Energy Cost Tracker Settings tab. The billing month/year sensors follow your supplier's recurring statement periods.",
         "data": {
           "fixed_daily": "Fixed costs per day",
           "fixed_monthly": "Fixed costs per month",
@@ -65,7 +65,7 @@
       },
       "reconfigure": {
         "title": "Reconfigure Energy Cost Tracker",
-        "description": "Change source entities or tariffs without deleting history. A changed cumulative source starts a new internal meter segment.",
+        "description": "Change source entities or dynamic tariffs without deleting history. Fixed-cost changes are scheduled by effective date in the Energy Cost Tracker Settings tab. A changed cumulative source starts a new internal meter segment.",
         "data": {
           "currency": "Currency",
           "grid_import_energy": "Cumulative grid import",
@@ -73,12 +73,12 @@
           "grid_power": "Current grid power",
           "pv_energy": "Cumulative PV production",
           "pv_power": "Current PV power",
-          "battery_charge_energy": "Cumulative battery charge energy",
-          "battery_discharge_energy": "Cumulative battery discharge energy",
-          "battery_power": "Battery power",
-          "battery_soc": "Battery SOC",
+          "battery_charge_energy": "Cumulative battery charge energy (multiple allowed)",
+          "battery_discharge_energy": "Cumulative battery discharge energy (multiple allowed)",
+          "battery_power": "Battery power (multiple allowed)",
+          "battery_soc": "SOC helper for automatic empty detection (optional)",
           "battery_power_positive": "Positive battery power means",
-          "battery_empty_soc": "SOC treated as empty",
+          "battery_empty_soc": "SOC helper empty threshold",
           "import_price": "Import price",
           "export_price": "Export price",
           "import_price_multiplier": "Import multiplier",

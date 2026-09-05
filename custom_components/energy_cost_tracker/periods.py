@@ -45,6 +45,32 @@ def billing_year_bounds(
     return start, end
 
 
+
+def billing_month_segments(
+    start: datetime, end: datetime, start_day: int
+) -> list[tuple[datetime, datetime]]:
+    """Return billing-month slices intersecting ``[start, end)``.
+
+    The first and last slice are clipped when a billing year boundary does not
+    align with the configured recurring billing-month start day.
+    """
+    if end <= start:
+        return []
+    result: list[tuple[datetime, datetime]] = []
+    cursor = start
+    guard = 0
+    while cursor < end and guard < 24:
+        month_start, month_end = billing_month_bounds(cursor, start_day)
+        slice_start = max(start, month_start)
+        slice_end = min(end, month_end)
+        if slice_end > slice_start:
+            result.append((slice_start, slice_end))
+        if month_end <= cursor:
+            break
+        cursor = month_end
+        guard += 1
+    return result
+
 def standard_periods(now: datetime, billing_month_day: int, billing_year_month: int, billing_year_day: int) -> dict[str, tuple[datetime, datetime]]:
     """Return standard and billing periods."""
     hour = now.replace(minute=0, second=0, microsecond=0)

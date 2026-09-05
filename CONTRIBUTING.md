@@ -14,8 +14,7 @@ The current unit tests exercise the pure accounting, ledger and billing-period m
 
 ```bash
 python -m pip install -r requirements-test.txt
-python -m pytest -q
-python -m compileall -q custom_components/energy_cost_tracker
+./scripts/check.sh
 ```
 
 ## Pull requests
@@ -28,11 +27,11 @@ Before opening a pull request:
 4. Do not silently convert unknown or incomplete energy data into `exact` financial values.
 5. Run the local tests.
 
-GitHub Actions also run Home Assistant hassfest and HACS repository validation.
+GitHub Actions also import-smoke the integration against Home Assistant 2026.8.0 and the latest stable release, then run Home Assistant hassfest and HACS repository validation.
 
 ## Release process
 
-Releases use SemVer-style tags such as `v0.1.0-alpha.1`.
+Releases use SemVer-style tags such as `v0.1.0-rc.1` and `v0.1.0`.
 
 1. Move relevant entries from `Unreleased` to a dated version in `CHANGELOG.md`.
 2. Set the same version without the leading `v` in `custom_components/energy_cost_tracker/manifest.json`.

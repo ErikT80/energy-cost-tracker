@@ -9,6 +9,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
     runtime = entry.runtime_data
     return {
         "config": dict(entry.data),
+        "options": dict(entry.options),
         "summary": runtime.summary,
         "source_states": await runtime.ledger.async_source_states(),
         "recent_events": await runtime.ledger.async_recent_events(50),

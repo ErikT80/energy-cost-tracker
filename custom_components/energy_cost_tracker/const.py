@@ -3,7 +3,10 @@ from __future__ import annotations
 
 DOMAIN = "energy_cost_tracker"
 NAME = "Energy Cost Tracker"
-VERSION = "0.1.0-alpha.6"
+VERSION = "0.1.0-rc.1"
+CONFIG_ENTRY_VERSION = 2
+CONFIG_ENTRY_MINOR_VERSION = 0
+
 PLATFORMS = ["sensor"]
 
 PANEL_URL = "energy-cost-tracker"
@@ -14,8 +17,16 @@ FRONTEND_URL = f"/{DOMAIN}/energy-cost-tracker-panel.js"
 
 DB_FILENAME = f"{DOMAIN}.db"
 ACCOUNTING_INTERVAL_SECONDS = 60
+LEDGER_INTERVAL_SECONDS = 15 * 60
 
 CONF_CURRENCY = "currency"
+
+# Optional UI-only investment amounts. Stored in the config-entry options so
+# changing them never changes the immutable accounting/source profile.
+CONF_PV_INVESTMENT = "pv_investment"
+CONF_BATTERY_INVESTMENT = "battery_investment"
+CONF_FIXED_COST_PROFILES = "fixed_cost_profiles"
+CONF_PANEL_ALLOWED_USERS = "panel_allowed_user_ids"
 
 CONF_GRID_IMPORT_ENERGY = "grid_import_energy"
 CONF_GRID_EXPORT_ENERGY = "grid_export_energy"

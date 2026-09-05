@@ -1,8 +1,8 @@
 __pycache__/
 .pytest_cache/
 *.pyc
-.idea
 .DS_Store
 .coverage
 htmlcov/
 dist/
+.idea/

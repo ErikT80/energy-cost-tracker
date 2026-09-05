@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
@@ -12,13 +12,15 @@ from typing import Any
 
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import async_track_point_in_utc_time, async_track_state_change_event, async_track_time_interval
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import EnergyConverter
 
 from .accounting import BatteryInventory, EnergyFrame, Prices, allocate_and_value
+from .accumulator import IntervalAccumulator
 from .const import (
     ACCOUNTING_INTERVAL_SECONDS,
+    LEDGER_INTERVAL_SECONDS,
     CONF_ANNUAL_REBATE,
     CONF_BATTERY_CHARGE_ENERGY,
     CONF_BATTERY_DISCHARGE_ENERGY,
@@ -33,6 +35,7 @@ from .const import (
     CONF_FIXED_ANNUAL,
     CONF_FIXED_DAILY,
     CONF_FIXED_MONTHLY,
+    CONF_FIXED_COST_PROFILES,
     CONF_GRID_EXPORT_ENERGY,
     CONF_GRID_IMPORT_ENERGY,
     CONF_GRID_POWER,
@@ -52,7 +55,8 @@ from .const import (
     QUALITY_UNKNOWN_BATTERY_BASIS,
 )
 from .ledger import Ledger
-from .periods import standard_periods
+from .fixed_costs import fixed_cost_breakdown_for_interval, fixed_cost_for_interval, normalize_profiles
+from .periods import billing_month_bounds, billing_month_segments, billing_year_bounds, standard_periods
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,6 +103,15 @@ def _utc_iso(value: datetime) -> str:
     return dt_util.as_utc(value).isoformat()
 
 
+def _entity_ids(value: Any) -> list[str]:
+    """Normalize legacy single-entity config and current multi-select config."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return [str(entity_id) for entity_id in value if entity_id]
+
+
 class EnergyCostRuntime:
     """Coordinates source meters, immutable ledger, summaries and entity updates."""
 
@@ -117,10 +130,13 @@ class EnergyCostRuntime:
         self._backup_in_progress = False
         self._accounting_suspended = False
         self._unavailable_energy_sources: list[str] = []
+        self._pending = IntervalAccumulator()
+        self._ledger_boundary_unsub: Callable[[], None] | None = None
 
     async def async_start(self) -> None:
         await self.ledger.async_initialize()
         await self._async_load_inventory()
+        await self._async_load_pending()
         profile_json = json.dumps(self.config, sort_keys=True, default=str)
         await self.ledger.async_ensure_profile(
             _utc_iso(dt_util.utcnow()), hashlib.sha256(profile_json.encode()).hexdigest(), self.config
@@ -134,12 +150,18 @@ class EnergyCostRuntime:
                 self.hass, self._scheduled_tick, timedelta(seconds=ACCOUNTING_INTERVAL_SECONDS)
             )
         )
+        self._schedule_next_ledger_boundary()
         await self.async_process_tick(initial=True)
         await self.async_refresh_summary()
 
     async def async_stop(self) -> None:
         while self._unsubs:
             self._unsubs.pop()()
+        if self._ledger_boundary_unsub is not None:
+            self._ledger_boundary_unsub()
+            self._ledger_boundary_unsub = None
+        await self.async_process_tick()
+        await self._async_flush_pending()
         await self._async_save_inventory()
 
     async def async_prepare_backup(self) -> None:
@@ -183,16 +205,12 @@ class EnergyCostRuntime:
     def _configured_energy_entities(self) -> list[str]:
         """Return cumulative energy sources that must be sampled coherently."""
         entities: list[str] = []
-        for key in (
-            CONF_GRID_IMPORT_ENERGY,
-            CONF_GRID_EXPORT_ENERGY,
-            CONF_BATTERY_CHARGE_ENERGY,
-            CONF_BATTERY_DISCHARGE_ENERGY,
-        ):
+        for key in (CONF_GRID_IMPORT_ENERGY, CONF_GRID_EXPORT_ENERGY):
             value = self.config.get(key)
             if value:
                 entities.append(value)
-        entities.extend(self.config.get(CONF_PV_ENERGY, []) or [])
+        for key in (CONF_PV_ENERGY, CONF_BATTERY_CHARGE_ENERGY, CONF_BATTERY_DISCHARGE_ENERGY):
+            entities.extend(_entity_ids(self.config.get(key)))
         return sorted(set(entities))
 
     def _unavailable_configured_energy_sources(self) -> list[str]:
@@ -203,26 +221,26 @@ class EnergyCostRuntime:
         ]
 
     def _all_configured_entities(self) -> list[str]:
-        keys = (
+        single_keys = (
             CONF_GRID_IMPORT_ENERGY,
             CONF_GRID_EXPORT_ENERGY,
             CONF_GRID_POWER,
-            CONF_BATTERY_CHARGE_ENERGY,
-            CONF_BATTERY_DISCHARGE_ENERGY,
-            CONF_BATTERY_POWER,
-    CONF_BATTERY_POWER_POSITIVE,
-    BATTERY_POSITIVE_CHARGING,
-            CONF_BATTERY_SOC,
             CONF_IMPORT_PRICE,
             CONF_EXPORT_PRICE,
         )
         entities: list[str] = []
-        for key in keys:
+        for key in single_keys:
             value = self.config.get(key)
             if value:
                 entities.append(value)
-        for key in (CONF_PV_ENERGY, CONF_PV_POWER):
-            entities.extend(self.config.get(key, []) or [])
+        for key in (
+            CONF_PV_ENERGY,
+            CONF_PV_POWER,
+            CONF_BATTERY_CHARGE_ENERGY,
+            CONF_BATTERY_DISCHARGE_ENERGY,
+            CONF_BATTERY_POWER,
+        ):
+            entities.extend(_entity_ids(self.config.get(key)))
         return sorted(set(entities))
 
     @callback
@@ -236,18 +254,40 @@ class EnergyCostRuntime:
         }:
             self.entry.async_create_task(
                 self.hass,
-                self.async_process_tick(),
+                self.async_process_tick(force_flush=True),
                 "Energy Cost Tracker tariff boundary",
             )
 
     async def _scheduled_tick(self, now: datetime) -> None:
         await self.async_process_tick()
 
+    def _schedule_next_ledger_boundary(self) -> None:
+        """Schedule an aligned persistent-ledger boundary."""
+        if self._ledger_boundary_unsub is not None:
+            self._ledger_boundary_unsub()
+        now = dt_util.utcnow()
+        next_epoch = (int(now.timestamp()) // LEDGER_INTERVAL_SECONDS + 1) * LEDGER_INTERVAL_SECONDS
+        boundary = datetime.fromtimestamp(next_epoch, tz=timezone.utc)
+        self._ledger_boundary_unsub = async_track_point_in_utc_time(
+            self.hass, self._ledger_boundary_tick, boundary
+        )
+
+    async def _ledger_boundary_tick(self, now: datetime) -> None:
+        try:
+            await self.async_process_tick(boundary=dt_util.as_utc(now))
+        finally:
+            self._schedule_next_ledger_boundary()
+
     def _refresh_live(self) -> None:
         def state_value(entity_id: str | None) -> float | None:
             return _float_state(self.hass.states.get(entity_id)) if entity_id else None
 
-        battery_power = state_value(self.config.get(CONF_BATTERY_POWER))
+        battery_power_values = [
+            value
+            for entity in _entity_ids(self.config.get(CONF_BATTERY_POWER))
+            if (value := state_value(entity)) is not None
+        ]
+        battery_power = sum(battery_power_values) if battery_power_values else None
         if (
             battery_power is not None
             and self.config.get(CONF_BATTERY_POWER_POSITIVE, BATTERY_POSITIVE_CHARGING)
@@ -260,12 +300,13 @@ class EnergyCostRuntime:
             "grid_power": state_value(self.config.get(CONF_GRID_POWER)),
             "pv_power": sum(
                 value
-                for entity in self.config.get(CONF_PV_POWER, []) or []
+                for entity in _entity_ids(self.config.get(CONF_PV_POWER))
                 if (value := state_value(entity)) is not None
             ),
             # Normalized convention in the panel/API: positive means charging.
             "battery_power": battery_power,
-            "battery_soc": state_value(self.config.get(CONF_BATTERY_SOC)),
+            # SOC is intentionally not a dashboard value. It is an optional technical
+            # helper used only to reconcile an initially unknown battery cost basis.
             "import_price": current_prices.import_price,
             "export_price": current_prices.export_price,
             "accounting_suspended": self._accounting_suspended,
@@ -309,59 +350,86 @@ class EnergyCostRuntime:
         ) if export_state else None
         return Prices(import_price=import_price, export_price=export_price)
 
-    def _fixed_cost_for_interval(self, start: datetime, end: datetime) -> float:
-        """Accrue configured fixed charges over local calendar periods.
-
-        Actual UTC durations are used for local days/months/years, so DST changes
-        do not make a daily or monthly charge drift.
-        """
-        if end <= start:
-            return 0.0
-        total = 0.0
-        cursor = start
-        daily = float(self.config.get(CONF_FIXED_DAILY, 0.0))
-        monthly = float(self.config.get(CONF_FIXED_MONTHLY, 0.0))
-        annual = float(self.config.get(CONF_FIXED_ANNUAL, 0.0)) - float(
-            self.config.get(CONF_ANNUAL_REBATE, 0.0)
+    def _fixed_cost_profiles(self):
+        """Return the legacy baseline plus all dated fixed-cost profiles."""
+        return normalize_profiles(
+            self.config,
+            self.entry.options.get(CONF_FIXED_COST_PROFILES, []),
         )
 
-        while cursor < end:
-            local = dt_util.as_local(cursor)
-            day_start_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
-            next_day_local = day_start_local + timedelta(days=1)
+    def _fixed_cost_for_interval(self, start: datetime, end: datetime) -> float:
+        """Accrue the fixed-cost profile active on each local calendar date."""
+        return fixed_cost_for_interval(
+            start,
+            end,
+            self.hass.config.time_zone,
+            self._fixed_cost_profiles(),
+        )
 
-            month_start_local = day_start_local.replace(day=1)
-            if month_start_local.month == 12:
-                next_month_local = month_start_local.replace(
-                    year=month_start_local.year + 1, month=1
-                )
-            else:
-                next_month_local = month_start_local.replace(month=month_start_local.month + 1)
+    async def _async_recalculate_fixed_cost_history_locked(self) -> int:
+        """Rebuild persisted fixed/net costs while the process lock is held."""
+        profiles = self._fixed_cost_profiles()
+        rows = await self.ledger.async_fixed_cost_rows()
+        updates: list[tuple[float, float | None, int]] = []
+        for row in rows:
+            start = datetime.fromisoformat(str(row["start_ts"]).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(str(row["end_ts"]).replace("Z", "+00:00"))
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            fixed = fixed_cost_for_interval(
+                start, end, self.hass.config.time_zone, profiles
+            )
+            import_cost = row.get("import_cost")
+            export_revenue = row.get("export_revenue")
+            net = (
+                None
+                if import_cost is None or export_revenue is None
+                else float(import_cost) - float(export_revenue) + fixed
+            )
+            old_fixed = float(row.get("fixed_cost") or 0.0)
+            old_net = row.get("net_cost")
+            net_changed = (old_net is None) != (net is None) or (
+                old_net is not None
+                and net is not None
+                and abs(float(old_net) - net) > 1e-10
+            )
+            if abs(old_fixed - fixed) <= 1e-10 and not net_changed:
+                continue
+            updates.append((fixed, net, int(row["id"])))
+        return await self.ledger.async_apply_fixed_cost_updates(
+            updates,
+            {"profiles": [profile.as_dict() for profile in profiles]},
+        )
 
-            year_start_local = day_start_local.replace(month=1, day=1)
-            next_year_local = year_start_local.replace(year=year_start_local.year + 1)
+    async def async_recalculate_fixed_cost_history(self) -> int:
+        """Rebuild only fixed/net costs from the currently stored dated schedule."""
+        await self._process_lock.acquire()
+        try:
+            changed = await self._async_recalculate_fixed_cost_history_locked()
+        finally:
+            self._process_lock.release()
+        await self.async_refresh_summary()
+        return changed
 
-            next_day_utc = dt_util.as_utc(next_day_local)
-            slice_end = min(end, next_day_utc)
-            seconds = (slice_end - cursor).total_seconds()
-            if seconds <= 0:
-                break
+    async def async_set_fixed_cost_profiles(self, profiles: list[dict[str, Any]]) -> int:
+        """Atomically switch schedule after closing the old active interval."""
+        await self.async_process_tick(force_flush=True)
+        await self._process_lock.acquire()
+        try:
+            options = dict(self.entry.options)
+            options[CONF_FIXED_COST_PROFILES] = profiles
+            self.hass.config_entries.async_update_entry(self.entry, options=options)
+            changed = await self._async_recalculate_fixed_cost_history_locked()
+        finally:
+            self._process_lock.release()
+        await self.async_refresh_summary()
+        return changed
 
-            day_seconds = (next_day_utc - dt_util.as_utc(day_start_local)).total_seconds()
-            month_seconds = (
-                dt_util.as_utc(next_month_local) - dt_util.as_utc(month_start_local)
-            ).total_seconds()
-            year_seconds = (
-                dt_util.as_utc(next_year_local) - dt_util.as_utc(year_start_local)
-            ).total_seconds()
-
-            total += daily * seconds / day_seconds
-            total += monthly * seconds / month_seconds
-            total += annual * seconds / year_seconds
-            cursor = slice_end
-        return total
-
-    async def async_process_tick(self, initial: bool = False) -> None:
+    async def async_process_tick(
+        self, initial: bool = False, force_flush: bool = False, boundary: datetime | None = None
+    ) -> None:
         if self._processing or self._backup_in_progress:
             return
 
@@ -380,6 +448,9 @@ class EnergyCostRuntime:
                 # Do not advance any cumulative baseline while one configured energy
                 # source is unavailable. On recovery all deltas therefore cover the
                 # same elapsed window, which is booked as an estimated long interval.
+                # A tariff boundary may still safely commit already accumulated data.
+                if boundary is not None and not self._pending.empty:
+                    await self._async_flush_pending()
                 self._refresh_live()
                 if self.summary:
                     self.summary["live"] = dict(self.live)
@@ -397,7 +468,7 @@ class EnergyCostRuntime:
                     last_tick = now
 
             # Use the price sampled at the previous tick for the energy elapsed since
-            # that tick. This avoids assigning the new tariff to the minute just ended.
+            # that tick. This avoids assigning a new tariff to energy measured before the tariff change.
             stored_import = await self.ledger.async_get_meta("last_import_price")
             stored_export = await self.ledger.async_get_meta("last_export_price")
             current_prices = self._current_prices()
@@ -408,13 +479,15 @@ class EnergyCostRuntime:
 
             gi, q_gi = await self._source_delta("grid_import", self.config.get(CONF_GRID_IMPORT_ENERGY), now)
             ge, q_ge = await self._source_delta("grid_export", self.config.get(CONF_GRID_EXPORT_ENERGY), now)
-            pv, q_pv = await self._multi_source_delta("pv", self.config.get(CONF_PV_ENERGY, []) or [], now)
-            bc, q_bc = await self._source_delta("battery_charge", self.config.get(CONF_BATTERY_CHARGE_ENERGY), now)
-            bd, q_bd = await self._source_delta("battery_discharge", self.config.get(CONF_BATTERY_DISCHARGE_ENERGY), now)
+            pv, q_pv = await self._multi_source_delta("pv", _entity_ids(self.config.get(CONF_PV_ENERGY)), now)
+            bc, q_bc = await self._multi_source_delta("battery_charge", _entity_ids(self.config.get(CONF_BATTERY_CHARGE_ENERGY)), now)
+            bd, q_bd = await self._multi_source_delta("battery_discharge", _entity_ids(self.config.get(CONF_BATTERY_DISCHARGE_ENERGY)), now)
 
             await self.ledger.async_set_meta("last_tick", _utc_iso(now))
-            await self.ledger.async_set_meta("last_import_price", "" if current_prices.import_price is None else str(current_prices.import_price))
-            await self.ledger.async_set_meta("last_export_price", "" if current_prices.export_price is None else str(current_prices.export_price))
+            if current_prices.import_price is not None:
+                await self.ledger.async_set_meta("last_import_price", str(current_prices.import_price))
+            if current_prices.export_price is not None:
+                await self.ledger.async_set_meta("last_export_price", str(current_prices.export_price))
 
             # First-ever observation only establishes baselines.
             if last_tick_raw is None or initial and (now - last_tick).total_seconds() < 1:
@@ -425,7 +498,7 @@ class EnergyCostRuntime:
             if seconds <= 0:
                 return
 
-            qualities = [q_gi, q_ge, q_bc, q_bd, *q_pv]
+            qualities = [q_gi, q_ge, *q_bc, *q_bd, *q_pv]
             quality = QUALITY_EXACT
             if any(q == QUALITY_RECONSTRUCTED for q in qualities):
                 quality = QUALITY_RECONSTRUCTED
@@ -438,14 +511,17 @@ class EnergyCostRuntime:
             # Reconcile stranded stored cost only when the battery is observed empty
             # and is not charging in the same sampled interval. This avoids deleting
             # freshly charged energy while SOC still sits around the empty threshold.
-            soc_entity = self.config.get(CONF_BATTERY_SOC)
-            soc = _float_state(self.hass.states.get(soc_entity)) if soc_entity else None
+            soc_entities = _entity_ids(self.config.get(CONF_BATTERY_SOC))
+            soc_values = [
+                value
+                for entity_id in soc_entities
+                if (value := _float_state(self.hass.states.get(entity_id))) is not None
+            ]
+            all_batteries_empty = bool(soc_entities) and len(soc_values) == len(soc_entities) and all(
+                soc <= float(self.config.get(CONF_BATTERY_EMPTY_SOC, 5.0)) for soc in soc_values
+            )
             loss_cost = 0.0
-            if (
-                soc is not None
-                and soc <= float(self.config.get(CONF_BATTERY_EMPTY_SOC, 5.0))
-                and bc <= 1e-6
-            ):
+            if all_batteries_empty and bc <= 1e-6:
                 if self.inventory.energy_kwh > 1e-6:
                     basis_was_known = self.inventory.basis_known
                     stranded = self.inventory.mark_empty()
@@ -489,8 +565,7 @@ class EnergyCostRuntime:
             if result.battery_uncovered_discharge > 1e-6:
                 notes.append("battery_cost_basis_incomplete")
 
-            await self.ledger.async_insert_interval(
-                {
+            sample_row = {
                     "start_ts": _utc_iso(last_tick),
                     "end_ts": _utc_iso(now),
                     "seconds": seconds,
@@ -523,7 +598,25 @@ class EnergyCostRuntime:
                     "quality": quality,
                     "notes": ",".join(notes) if notes else None,
                 }
-            )
+            self._pending.add(sample_row)
+            await self._async_save_pending()
+
+            should_flush = force_flush
+            if boundary is not None and not self._pending.empty:
+                try:
+                    pending_start = datetime.fromisoformat(str(self._pending.start_ts))
+                    if pending_start.tzinfo is None:
+                        pending_start = pending_start.replace(tzinfo=timezone.utc)
+                    should_flush = should_flush or pending_start.astimezone(timezone.utc) < dt_util.as_utc(boundary)
+                except (TypeError, ValueError):
+                    should_flush = True
+            # A long recovery interval cannot be accurately assigned to a single
+            # tariff bucket. Keep it as one explicit estimated row instead of
+            # merging it with subsequent exact samples.
+            if seconds > LEDGER_INTERVAL_SECONDS:
+                should_flush = True
+            if should_flush:
+                await self._async_flush_pending()
             await self._async_save_inventory()
             self._refresh_live()
             await self.async_refresh_summary()
@@ -532,6 +625,34 @@ class EnergyCostRuntime:
         finally:
             self._processing = False
             self._process_lock.release()
+
+    @property
+    def pending_ledger_row(self) -> dict[str, Any] | None:
+        return self._pending.to_ledger_row()
+
+    async def _async_load_pending(self) -> None:
+        self._pending = IntervalAccumulator.from_json(
+            await self.ledger.async_get_meta("pending_interval")
+        )
+
+    async def _async_save_pending(self) -> None:
+        if self._pending.empty:
+            return
+        await self.ledger.async_set_meta("pending_interval", self._pending.to_json())
+
+    async def _async_flush_pending(self) -> None:
+        row = self._pending.to_ledger_row()
+        if row is None:
+            return
+        await self.ledger.async_commit_pending_interval(row)
+        self._pending = IntervalAccumulator()
+
+    async def async_chart_series(
+        self, start: str, end: str, granularity: str, tz_name: str
+    ) -> dict[str, Any]:
+        return await self.ledger.async_chart_series(
+            start, end, granularity, tz_name, self.pending_ledger_row
+        )
 
     async def _async_load_inventory(self) -> None:
         raw = await self.ledger.async_get_meta("battery_inventory")
@@ -560,6 +681,155 @@ class EnergyCostRuntime:
             ),
         )
 
+    async def async_mark_battery_empty(self) -> dict[str, Any]:
+        """Resolve an unknown initial battery inventory after user-confirmed empty state.
+
+        This action exists only for installations without SOC helper sensors. It is
+        intentionally one-way: once the cost basis is known, the action becomes a
+        no-op so an established inventory cannot be accidentally erased.
+        """
+        if _entity_ids(self.config.get(CONF_BATTERY_SOC)):
+            raise ValueError("soc_configured")
+        if not any(
+            _entity_ids(self.config.get(key))
+            for key in (CONF_BATTERY_CHARGE_ENERGY, CONF_BATTERY_DISCHARGE_ENERGY, CONF_BATTERY_POWER)
+        ):
+            raise ValueError("battery_not_configured")
+
+        # First capture all cumulative-meter movement up to the confirmation moment.
+        await self.async_process_tick()
+
+        async with self._process_lock:
+            if self.inventory.basis_known:
+                return {"changed": False, "basis_known": True}
+
+            discarded_energy = float(self.inventory.energy_kwh)
+            discarded_cost = float(self.inventory.cost_basis)
+            self.inventory.mark_empty()
+            await self._async_save_inventory()
+            now = _utc_iso(dt_util.utcnow())
+            await self.ledger.async_add_event(
+                now,
+                "battery_manual_empty",
+                "battery_inventory",
+                {
+                    "discarded_virtual_energy_kwh": discarded_energy,
+                    "discarded_unreconciled_cost_basis": discarded_cost,
+                },
+            )
+
+        await self.async_refresh_summary()
+        return {"changed": True, "basis_known": True}
+
+    async def _async_fixed_cost_breakdown_for_period(
+        self, start: datetime, end: datetime
+    ) -> dict[str, float]:
+        """Return fixed-cost components only for ledger-covered time.
+
+        This intentionally follows the same persisted/open interval coverage as
+        the public period summary. It therefore never invents fixed charges for
+        time before ECT started tracking or for uncovered gaps.
+        """
+        start_utc = dt_util.as_utc(start)
+        end_utc = dt_util.as_utc(end)
+        start_iso = start_utc.isoformat()
+        end_iso = end_utc.isoformat()
+        bounds = await self.ledger.async_interval_bounds(start_iso, end_iso)
+        profiles = self._fixed_cost_profiles()
+        result = {"daily": 0.0, "monthly": 0.0, "annual": 0.0, "annual_rebate": 0.0, "total": 0.0}
+        ranges: list[tuple[datetime, datetime]] = []
+
+        def collect_slice(raw_start, raw_end) -> None:
+            row_start = datetime.fromisoformat(str(raw_start).replace("Z", "+00:00"))
+            row_end = datetime.fromisoformat(str(raw_end).replace("Z", "+00:00"))
+            if row_start.tzinfo is None:
+                row_start = row_start.replace(tzinfo=timezone.utc)
+            if row_end.tzinfo is None:
+                row_end = row_end.replace(tzinfo=timezone.utc)
+            overlap_start = max(start_utc, row_start.astimezone(timezone.utc))
+            overlap_end = min(end_utc, row_end.astimezone(timezone.utc))
+            if overlap_end > overlap_start:
+                ranges.append((overlap_start, overlap_end))
+
+        for row in bounds:
+            collect_slice(row["start_ts"], row["end_ts"])
+        pending = self.pending_ledger_row
+        if pending:
+            collect_slice(pending["start_ts"], pending["end_ts"])
+
+        # Most ledgers contain thousands of adjacent 15-minute rows. Merge only
+        # truly contiguous/overlapping coverage before calculating the calendar
+        # proration, so invoice-year views stay cheap without filling real gaps.
+        merged: list[list[datetime]] = []
+        for range_start, range_end in sorted(ranges, key=lambda item: item[0]):
+            if merged and range_start <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], range_end)
+            else:
+                merged.append([range_start, range_end])
+        for range_start, range_end in merged:
+            part = fixed_cost_breakdown_for_interval(
+                range_start, range_end, self.hass.config.time_zone, profiles
+            )
+            for key in result:
+                result[key] += float(part[key])
+        return result
+
+    async def _async_invoice_period(
+        self, start: datetime, end: datetime
+    ) -> dict[str, Any]:
+        summary = await self.ledger.async_period_summary(
+            _utc_iso(start), _utc_iso(end), self.pending_ledger_row
+        )
+        summary["period_start"] = start.isoformat()
+        summary["period_end"] = end.isoformat()
+        summary["fixed_breakdown"] = await self._async_fixed_cost_breakdown_for_period(start, end)
+        return summary
+
+    async def async_invoice_breakdown(
+        self, view: str, anchor_date: str | None = None
+    ) -> dict[str, Any]:
+        """Build billing-month/year invoice reconciliation data."""
+        tz = dt_util.get_time_zone(self.hass.config.time_zone)
+        if tz is None:
+            tz = timezone.utc
+        if anchor_date:
+            try:
+                anchor_day = datetime.strptime(anchor_date, "%Y-%m-%d").date()
+            except ValueError as err:
+                raise ValueError("anchor must be YYYY-MM-DD") from err
+            anchor = datetime(anchor_day.year, anchor_day.month, anchor_day.day, 12, 0, tzinfo=tz)
+        else:
+            anchor = dt_util.now()
+
+        month_day = int(self.config.get(CONF_BILLING_MONTH_START_DAY, 1))
+        year_month = int(self.config.get(CONF_BILLING_YEAR_START_MONTH, 1))
+        year_day = int(self.config.get(CONF_BILLING_YEAR_START_DAY, 1))
+        if view == "month":
+            start, end = billing_month_bounds(anchor, month_day)
+        elif view == "year":
+            start, end = billing_year_bounds(anchor, year_month, year_day)
+        else:
+            raise ValueError("view must be month or year")
+
+        period = await self._async_invoice_period(start, end)
+        result: dict[str, Any] = {
+            "view": view,
+            "anchor": anchor.date().isoformat(),
+            "period_start": start.isoformat(),
+            "period_end": end.isoformat(),
+            "prev_anchor": (start - timedelta(days=1)).date().isoformat(),
+            "next_anchor": end.date().isoformat(),
+            "is_current": start <= dt_util.now() < end,
+            "period": period,
+            "months": [],
+        }
+        if view == "year":
+            months = []
+            for month_start, month_end in billing_month_segments(start, end, month_day):
+                months.append(await self._async_invoice_period(month_start, month_end))
+            result["months"] = months
+        return result
+
     async def async_refresh_summary(self) -> None:
         now = dt_util.now()
         periods = standard_periods(
@@ -570,11 +840,15 @@ class EnergyCostRuntime:
         )
         summaries: dict[str, Any] = {}
         for name, (start, end) in periods.items():
-            summary = await self.ledger.async_period_summary(_utc_iso(start), _utc_iso(end))
+            summary = await self.ledger.async_period_summary(
+                _utc_iso(start), _utc_iso(end), self.pending_ledger_row
+            )
             summary["period_start"] = start.isoformat()
             summary["period_end"] = end.isoformat()
             summaries[name] = summary
-        summaries["total"] = await self.ledger.async_period_summary(None, None)
+        summaries["total"] = await self.ledger.async_period_summary(
+            None, None, self.pending_ledger_row
+        )
         self.summary = {
             "periods": summaries,
             "battery_inventory": {
