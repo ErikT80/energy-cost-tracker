@@ -62,7 +62,6 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-          cache: pip
       - name: Install Home Assistant
         run: python -m pip install "${{ matrix.package }}"
       - name: Import-smoke custom integration
