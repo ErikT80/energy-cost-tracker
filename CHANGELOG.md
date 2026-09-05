@@ -8,6 +8,9 @@ The project follows [Semantic Versioning](https://semver.org/). While the integr
 
 ## [0.1.0-rc.1] - 2026-09-03
 
+### Fixed
+- HA import smoke test now explicitly adds the repository root to `sys.path`, so `custom_components.energy_cost_tracker` can be imported when the script is executed from `scripts/` in GitHub Actions.
+
 ### Changed
 - Froze the feature set for the first public release candidate and refreshed the README/documentation around current accounting, chart, access, backup and HACS behavior.
 - Updated GitHub Actions to `actions/checkout@v7` and `actions/setup-python@v7`; CI now uses Python 3.14. Dependabot now groups GitHub Actions updates into one maintenance PR.

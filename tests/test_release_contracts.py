@@ -42,3 +42,10 @@ def test_frontend_keeps_localized_axis_titles_and_mobile_tap_contract():
 def test_hacs_minimum_version_is_declared():
     hacs = json.loads((ROOT / "hacs.json").read_text())
     assert hacs["homeassistant"] == "2026.8.0"
+
+
+def test_ha_import_smoke_adds_repository_root_to_sys_path():
+    script = (ROOT / "scripts" / "ha_import_smoke.py").read_text()
+    assert "REPO_ROOT = Path(__file__).resolve().parents[1]" in script
+    assert "sys.path.insert(0, str(REPO_ROOT))" in script
+    assert 'REPO_ROOT / "custom_components/energy_cost_tracker/manifest.json"' in script
