@@ -60,6 +60,9 @@ from .periods import billing_month_bounds, billing_month_segments, billing_year_
 
 _LOGGER = logging.getLogger(__name__)
 
+_TARIFF_CHANGE_DEBOUNCE_SECONDS = 0.5
+_POST_LEDGER_BOUNDARY_TARIFF_GRACE_SECONDS = 10.0
+
 
 def _float_state(state) -> float | None:
     if state is None or state.state in {"unknown", "unavailable", "none", ""}:
@@ -132,6 +135,9 @@ class EnergyCostRuntime:
         self._unavailable_energy_sources: list[str] = []
         self._pending = IntervalAccumulator()
         self._ledger_boundary_unsub: Callable[[], None] | None = None
+        self._tariff_change_task: asyncio.Task[Any] | None = None
+        self._pending_tariff_change_at: datetime | None = None
+        self._last_ledger_boundary: datetime | None = None
 
     async def async_start(self) -> None:
         await self.ledger.async_initialize()
@@ -160,6 +166,10 @@ class EnergyCostRuntime:
         if self._ledger_boundary_unsub is not None:
             self._ledger_boundary_unsub()
             self._ledger_boundary_unsub = None
+        if self._tariff_change_task is not None:
+            self._tariff_change_task.cancel()
+            self._tariff_change_task = None
+            self._pending_tariff_change_at = None
         await self.async_process_tick()
         await self._async_flush_pending()
         await self._async_save_inventory()
@@ -243,22 +253,120 @@ class EnergyCostRuntime:
             entities.extend(_entity_ids(self.config.get(key)))
         return sorted(set(entities))
 
+    def _price_for_state(self, entity_id: str, state) -> float | None:
+        """Return the configured effective tariff for one price entity state."""
+        if entity_id == self.config.get(CONF_IMPORT_PRICE):
+            return _price_per_kwh(
+                state,
+                float(
+                    self.config.get(
+                        CONF_IMPORT_PRICE_MULTIPLIER,
+                        DEFAULTS[CONF_IMPORT_PRICE_MULTIPLIER],
+                    )
+                ),
+                float(
+                    self.config.get(
+                        CONF_IMPORT_PRICE_ADJUSTMENT,
+                        DEFAULTS[CONF_IMPORT_PRICE_ADJUSTMENT],
+                    )
+                ),
+            )
+        if entity_id == self.config.get(CONF_EXPORT_PRICE):
+            return _price_per_kwh(
+                state,
+                float(
+                    self.config.get(
+                        CONF_EXPORT_PRICE_MULTIPLIER,
+                        DEFAULTS[CONF_EXPORT_PRICE_MULTIPLIER],
+                    )
+                ),
+                float(
+                    self.config.get(
+                        CONF_EXPORT_PRICE_ADJUSTMENT,
+                        DEFAULTS[CONF_EXPORT_PRICE_ADJUSTMENT],
+                    )
+                ),
+            )
+        return None
+
     @callback
     def _state_changed(self, event: Event[EventStateChangedData]) -> None:
         self._refresh_live()
-        # Close the financial interval immediately when a tariff changes. The stored
-        # previous tariff is then applied only to energy observed before this boundary.
-        if event.data["entity_id"] in {
-            self.config.get(CONF_IMPORT_PRICE),
-            self.config.get(CONF_EXPORT_PRICE),
-        }:
-            self.entry.async_create_task(
-                self.hass,
-                self.async_process_tick(force_flush=True),
-                "Energy Cost Tracker tariff boundary",
+        entity_id = event.data["entity_id"]
+        price_entities = {
+            configured_entity
+            for configured_entity in (
+                self.config.get(CONF_IMPORT_PRICE),
+                self.config.get(CONF_EXPORT_PRICE),
             )
+            if configured_entity
+        }
+        if entity_id not in price_entities:
+            return
+
+        # Price integrations often update attributes without changing the numeric
+        # tariff. Only an effective price change is a financial boundary.
+        old_price = self._price_for_state(entity_id, event.data.get("old_state"))
+        new_price = self._price_for_state(entity_id, event.data.get("new_state"))
+        if old_price == new_price:
+            return
+
+        change_at = dt_util.as_utc(event.time_fired)
+        if (
+            self._pending_tariff_change_at is None
+            or change_at < self._pending_tariff_change_at
+        ):
+            self._pending_tariff_change_at = change_at
+
+        # Import and export sensors from one provider normally update back-to-back.
+        # Debounce them into one accounting boundary so no intermediate mixed-price
+        # interval is committed. The regular 60-second tick is held while pending.
+        if self._tariff_change_task is not None and not self._tariff_change_task.done():
+            return
+        self._tariff_change_task = self.entry.async_create_task(
+            self.hass,
+            self._async_handle_tariff_change(),
+            "Energy Cost Tracker tariff boundary",
+        )
+
+    async def _async_handle_tariff_change(self) -> None:
+        try:
+            await asyncio.sleep(_TARIFF_CHANGE_DEBOUNCE_SECONDS)
+            change_at = self._pending_tariff_change_at or dt_util.utcnow()
+            boundary = self._last_ledger_boundary
+            if boundary is not None:
+                seconds_after_boundary = (change_at - boundary).total_seconds()
+                if 0 <= seconds_after_boundary <= _POST_LEDGER_BOUNDARY_TARIFF_GRACE_SECONDS:
+                    # The aligned boundary has already sampled/closed the preceding
+                    # quarter. A provider may publish the new quarter tariff a few
+                    # seconds later. Updating only the stored tariff here keeps the
+                    # next meter delta anchored at the aligned boundary and avoids a
+                    # misleading tiny ledger row using the previous quarter's price.
+                    current_prices = self._current_prices()
+                    if current_prices.import_price is not None:
+                        await self.ledger.async_set_meta(
+                            "last_import_price", str(current_prices.import_price)
+                        )
+                    if current_prices.export_price is not None:
+                        await self.ledger.async_set_meta(
+                            "last_export_price", str(current_prices.export_price)
+                        )
+                    self._refresh_live()
+                    if self.summary:
+                        self.summary["live"] = dict(self.live)
+                        for listener in list(self._listeners):
+                            listener()
+                    return
+
+            await self.async_process_tick(force_flush=True)
+        finally:
+            self._pending_tariff_change_at = None
+            self._tariff_change_task = None
 
     async def _scheduled_tick(self, now: datetime) -> None:
+        # Do not let the normal accounting cadence split a debounced tariff pair.
+        if self._tariff_change_task is not None and not self._tariff_change_task.done():
+            return
         await self.async_process_tick()
 
     def _schedule_next_ledger_boundary(self) -> None:
@@ -273,8 +381,10 @@ class EnergyCostRuntime:
         )
 
     async def _ledger_boundary_tick(self, now: datetime) -> None:
+        boundary = dt_util.as_utc(now)
+        self._last_ledger_boundary = boundary
         try:
-            await self.async_process_tick(boundary=dt_util.as_utc(now))
+            await self.async_process_tick(boundary=boundary)
         finally:
             self._schedule_next_ledger_boundary()
 
