@@ -2,7 +2,7 @@
 
 Energy Cost Tracker is a local-first Home Assistant custom integration for detailed electricity cost accounting. It combines cumulative grid/PV/battery meters with dynamic import/export prices, dated fixed costs and supplier billing periods, and stores the resulting financial history in a dedicated local SQLite ledger.
 
-> **Release candidate: 0.1.0-rc.1.** The feature set is frozen for the first public release. This release candidate is intended for backup/restore, invoice-reconciliation and multi-installation validation before `v0.1.0`.
+> **Release candidate: 0.1.0-rc.2.** The feature set is frozen for the first public release. This release candidate is intended for backup/restore, invoice-reconciliation and multi-installation validation before `v0.1.0`.
 
 ## Highlights
 

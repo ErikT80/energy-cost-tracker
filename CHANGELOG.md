@@ -6,6 +6,17 @@ The project follows [Semantic Versioning](https://semver.org/). While the integr
 
 ## [Unreleased]
 
+## [0.1.0-rc.2] - 2026-10-03
+
+### Fixed
+- Ignore attribute-only updates from configured import/export tariff entities when their effective numeric price is unchanged, avoiding needless financial interval boundaries.
+- Coalesce near-simultaneous import and export price changes for 0.5 seconds and hold the normal accounting tick while the pair is pending, so one provider update cannot create an intermediate mixed-price interval.
+- Treat tariff publication shortly after an aligned 15-minute ledger boundary as the price for the new interval, updating the stored tariff without creating a tiny extra ledger row at the previous quarter's price.
+
+### Changed
+- Added permanent runtime regression tests for unchanged tariff states, paired import/export tariff changes, and a tariff update five seconds after a quarter boundary.
+- Release automation now publishes the manifest version automatically after a version-changing merge to `main`: it creates the corresponding `v<version>` tag, builds `energy_cost_tracker.zip`, and marks alpha/beta/RC versions as GitHub prereleases. Existing tags are left untouched, so unrelated later merges do not republish the same version.
+
 ## [0.1.0-rc.1] - 2026-09-03
 
 ### Fixed

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 DOMAIN = "energy_cost_tracker"
 NAME = "Energy Cost Tracker"
-VERSION = "0.1.0-rc.1"
+VERSION = "0.1.0-rc.2"
 CONFIG_ENTRY_VERSION = 2
 CONFIG_ENTRY_MINOR_VERSION = 0
 
