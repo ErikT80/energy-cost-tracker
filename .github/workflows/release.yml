@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -14,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -22,7 +26,8 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-test.txt
 
-      - name: Verify tag matches manifest version
+      - name: Resolve release version
+        id: release_version
         shell: bash
         run: |
           manifest_version="$(python - <<'PY'
@@ -31,16 +36,35 @@ jobs:
           print(json.loads(Path('custom_components/energy_cost_tracker/manifest.json').read_text())['version'])
           PY
           )"
-          tag_version="${GITHUB_REF_NAME#v}"
-          if [ "$manifest_version" != "$tag_version" ]; then
-            echo "Tag version $tag_version does not match manifest version $manifest_version"
-            exit 1
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag_name="$GITHUB_REF_NAME"
+            tag_version="${tag_name#v}"
+            if [ "$manifest_version" != "$tag_version" ]; then
+              echo "Tag version $tag_version does not match manifest version $manifest_version"
+              exit 1
+            fi
+            publish=true
+          else
+            tag_name="v${manifest_version}"
+            if git ls-remote --exit-code --tags origin "refs/tags/${tag_name}" >/dev/null 2>&1; then
+              echo "Tag ${tag_name} already exists; nothing to publish for this main push."
+              publish=false
+            else
+              publish=true
+            fi
           fi
 
+          echo "version=${manifest_version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag_name}" >> "$GITHUB_OUTPUT"
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+
       - name: Install test dependencies
+        if: steps.release_version.outputs.publish == 'true'
         run: python -m pip install -r requirements-test.txt
 
       - name: Run release checks
+        if: steps.release_version.outputs.publish == 'true'
         shell: bash
         run: |
           python -m pytest -q
@@ -48,34 +72,53 @@ jobs:
           node --check custom_components/energy_cost_tracker/frontend/energy-cost-tracker-panel.js
 
       - name: Install minimum supported Home Assistant
+        if: steps.release_version.outputs.publish == 'true'
         run: python -m pip install "homeassistant==2026.8.0"
 
       - name: Import-smoke integration on minimum Home Assistant
+        if: steps.release_version.outputs.publish == 'true'
         run: python scripts/ha_import_smoke.py
 
       - name: Build manual-install archive
+        if: steps.release_version.outputs.publish == 'true'
         shell: bash
         run: |
           mkdir -p dist
           cd custom_components
           zip -r "../dist/energy_cost_tracker.zip" energy_cost_tracker -x "*/__pycache__/*" "*.pyc"
 
-      - name: Determine release type
-        id: release_type
+      - name: Create version tag after main merge
+        if: steps.release_version.outputs.publish == 'true' && github.ref_type != 'tag'
+        env:
+          TAG_NAME: ${{ steps.release_version.outputs.tag }}
         shell: bash
         run: |
-          if [[ "$GITHUB_REF_NAME" == *alpha* || "$GITHUB_REF_NAME" == *beta* || "$GITHUB_REF_NAME" == *rc* ]]; then
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG_NAME" "$GITHUB_SHA"
+          git push origin "$TAG_NAME"
+
+      - name: Determine release type
+        if: steps.release_version.outputs.publish == 'true'
+        id: release_type
+        env:
+          TAG_NAME: ${{ steps.release_version.outputs.tag }}
+        shell: bash
+        run: |
+          if [[ "$TAG_NAME" == *alpha* || "$TAG_NAME" == *beta* || "$TAG_NAME" == *rc* ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create GitHub release
+        if: steps.release_version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.release_version.outputs.tag }}
         shell: bash
         run: |
-          args=("$GITHUB_REF_NAME" "dist/energy_cost_tracker.zip" --generate-notes --title "$GITHUB_REF_NAME")
+          args=("$TAG_NAME" "dist/energy_cost_tracker.zip" --generate-notes --title "$TAG_NAME")
           if [ "${{ steps.release_type.outputs.prerelease }}" = "true" ]; then
             args+=(--prerelease)
           fi
