@@ -6,8 +6,15 @@ The project follows [Semantic Versioning](https://semver.org/). While the integr
 
 ## [Unreleased]
 
+## [0.1.0-rc.3] - 2026-10-19
+
+### Fixed
+- Make the current-hour cost period exactly one elapsed hour across the autumn DST fold. The first repeated 02:00 hour now ends at the second 02:00 with the new UTC offset instead of spanning two real hours.
+- Format chart/history timestamps in the Home Assistant timezone and disambiguate chart intervals that cross a UTC-offset change with the timezone abbreviation, so repeated CET/CEST times are no longer visually ambiguous.
+
 ### Changed
 - Opt in to Home Assistant 2026.11+ in-place entity ID renames without removing and re-adding Energy Cost Tracker sensors. Existing runtime update listeners stay registered; older supported Home Assistant versions retain their original rename behavior.
+- Add explicit autumn-DST regression coverage for the 25-hour Europe/Amsterdam day, including fixed daily costs plus 25 hourly and 100 quarter-hour chart buckets.
 
 ## [0.1.0-rc.2] - 2026-10-03
 

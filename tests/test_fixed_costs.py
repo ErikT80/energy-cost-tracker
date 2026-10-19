@@ -88,3 +88,15 @@ def test_fixed_cost_breakdown_switches_profile_mid_invoice_period():
     breakdown = mod.fixed_cost_breakdown_for_interval(start, end, "UTC", profiles)
     assert abs(breakdown["daily"] - 3.0) < 1e-9
     assert abs(breakdown["total"] - 3.0) < 1e-9
+
+
+def test_dst_fall_back_day_still_accrues_exact_daily_amount():
+    profiles = mod.normalize_profiles(
+        {"fixed_daily": 1, "fixed_monthly": 0, "fixed_annual": 0, "annual_rebate": 0}, []
+    )
+    # Europe/Amsterdam DST ends Oct 25 2026: the local calendar day is 25 actual hours.
+    start = datetime(2026, 10, 24, 22, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 25, 23, 0, tzinfo=timezone.utc)
+    assert (end - start).total_seconds() == 25 * 3600
+    value = mod.fixed_cost_for_interval(start, end, "Europe/Amsterdam", profiles)
+    assert abs(value - 1.0) < 1e-9

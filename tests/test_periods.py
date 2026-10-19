@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import importlib.util
 import sys
@@ -64,3 +64,22 @@ def test_billing_month_segments_clip_misaligned_year_edges():
     assert rows[0] == (datetime(2026, 8, 15, tzinfo=tz), datetime(2026, 8, 26, tzinfo=tz))
     assert rows[-1][1] == end
     assert all(a < b for a, b in rows)
+
+
+def test_current_hour_is_one_elapsed_hour_across_dst_fall_back():
+    tz = ZoneInfo("Europe/Amsterdam")
+
+    first_fold = datetime(2026, 10, 25, 2, 30, tzinfo=tz, fold=0)
+    first_start, first_end = mod.standard_periods(first_fold, 1, 1, 1)["hour"]
+    assert first_start.utcoffset() == timedelta(hours=2)
+    assert first_end.hour == 2
+    assert first_end.fold == 1
+    assert first_end.utcoffset() == timedelta(hours=1)
+    assert first_end.astimezone(timezone.utc) - first_start.astimezone(timezone.utc) == timedelta(hours=1)
+
+    second_fold = datetime(2026, 10, 25, 2, 30, tzinfo=tz, fold=1)
+    second_start, second_end = mod.standard_periods(second_fold, 1, 1, 1)["hour"]
+    assert second_start.fold == 1
+    assert second_start.utcoffset() == timedelta(hours=1)
+    assert second_end.hour == 3
+    assert second_end.astimezone(timezone.utc) - second_start.astimezone(timezone.utc) == timedelta(hours=1)
