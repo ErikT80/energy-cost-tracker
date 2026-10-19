@@ -1,7 +1,9 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import importlib.util
 import sys
 import sqlite3
+from zoneinfo import ZoneInfo
 
 MODULE = Path(__file__).parents[1] / "custom_components" / "energy_cost_tracker" / "ledger.py"
 spec = importlib.util.spec_from_file_location("ect_ledger", MODULE)
@@ -921,3 +923,31 @@ def test_existing_unversioned_ledger_is_refused(tmp_path):
         assert "no schema version" in str(err)
     else:
         raise AssertionError("existing unversioned ledger must not be guessed")
+
+
+def test_chart_buckets_preserve_both_hours_during_dst_fall_back():
+    start = datetime(2026, 10, 24, 22, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 25, 23, 0, tzinfo=timezone.utc)
+
+    hourly = mod.Ledger._chart_bucket_bounds(start, end, "hour", "Europe/Amsterdam")
+    quarters = mod.Ledger._chart_bucket_bounds(start, end, "quarter", "Europe/Amsterdam")
+    daily = mod.Ledger._chart_bucket_bounds(start, end, "day", "Europe/Amsterdam")
+
+    assert len(hourly) == 25
+    assert len(quarters) == 100
+    assert len(daily) == 1
+    assert daily[0][1] - daily[0][0] == timedelta(hours=25)
+    assert all(bucket_end - bucket_start == timedelta(hours=1) for bucket_start, bucket_end in hourly)
+    assert all(bucket_end - bucket_start == timedelta(minutes=15) for bucket_start, bucket_end in quarters)
+
+    tz = ZoneInfo("Europe/Amsterdam")
+    repeated_two_oclock = [
+        bucket_start.astimezone(tz)
+        for bucket_start, _bucket_end in hourly
+        if bucket_start.astimezone(tz).hour == 2
+    ]
+    assert len(repeated_two_oclock) == 2
+    assert {value.utcoffset() for value in repeated_two_oclock} == {
+        timedelta(hours=1),
+        timedelta(hours=2),
+    }

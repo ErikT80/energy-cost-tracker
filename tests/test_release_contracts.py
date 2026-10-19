@@ -49,3 +49,12 @@ def test_ha_import_smoke_adds_repository_root_to_sys_path():
     assert "REPO_ROOT = Path(__file__).resolve().parents[1]" in script
     assert "sys.path.insert(0, str(REPO_ROOT))" in script
     assert 'REPO_ROOT / "custom_components/energy_cost_tracker/manifest.json"' in script
+
+
+def test_frontend_disambiguates_dst_fold_timestamps_in_ha_timezone():
+    js = (INTEGRATION / "frontend" / "energy-cost-tracker-panel.js").read_text()
+    assert "dateTimeOptions(options = {})" in js
+    assert "this._hass?.config?.time_zone" in js
+    assert 'timeZoneName: "short"' in js
+    assert "crossesOffsetChange" in js
+    assert "this.localDateKey(start) === this.localDateKey(end)" in js

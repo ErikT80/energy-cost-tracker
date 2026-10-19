@@ -86,6 +86,32 @@ class EnergyCostTrackerPanel extends HTMLElement {
     return this.language().startsWith("nl") ? "nl-NL" : "en-GB";
   }
 
+  dateTimeOptions(options = {}) {
+    const timeZone = this._hass?.config?.time_zone;
+    return timeZone ? { ...options, timeZone } : options;
+  }
+
+  localDateKey(value) {
+    const parts = new Intl.DateTimeFormat("en-CA", this.dateTimeOptions({
+      year: "numeric", month: "2-digit", day: "2-digit"
+    })).formatToParts(new Date(value));
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  }
+
+  localTimeZoneName(value) {
+    const parts = new Intl.DateTimeFormat(this.locale(), this.dateTimeOptions({
+      hour: "2-digit", minute: "2-digit", timeZoneName: "short"
+    })).formatToParts(new Date(value));
+    return parts.find(part => part.type === "timeZoneName")?.value || "";
+  }
+
+  localTime(value, includeZone = false) {
+    const options = { hour: "2-digit", minute: "2-digit" };
+    if (includeZone) options.timeZoneName = "short";
+    return new Date(value).toLocaleTimeString(this.locale(), this.dateTimeOptions(options));
+  }
+
   tr(nl, en) {
     return this.language().startsWith("nl") ? nl : en;
   }
@@ -413,10 +439,9 @@ class EnergyCostTrackerPanel extends HTMLElement {
 
   chartLabel(value, granularity) {
     const d = new Date(value);
-    if (granularity === "month") return d.toLocaleDateString(this.locale(), { month: "short" });
-    if (granularity === "day") return d.toLocaleDateString(this.locale(), { day: "numeric" });
-    if (granularity === "hour") return d.toLocaleTimeString(this.locale(), { hour: "2-digit", minute: "2-digit" });
-    return d.toLocaleTimeString(this.locale(), { hour: "2-digit", minute: "2-digit" });
+    if (granularity === "month") return d.toLocaleDateString(this.locale(), this.dateTimeOptions({ month: "short" }));
+    if (granularity === "day") return d.toLocaleDateString(this.locale(), this.dateTimeOptions({ day: "numeric" }));
+    return this.localTime(d);
   }
 
   chartTimeTicks(chartStartMs, chartEndMs, granularity, plotW, timeX, timelineBuckets) {
@@ -434,7 +459,7 @@ class EnergyCostTrackerPanel extends HTMLElement {
         if (cursor.getTime() >= chartStartMs - 1000) {
           ticks.push({
             x: timeX(cursor.getTime()),
-            label: cursor.toLocaleTimeString(this.locale(), { hour: "2-digit", minute: "2-digit" })
+            label: this.localTime(cursor)
           });
         }
         cursor.setHours(cursor.getHours() + stepHours);
@@ -461,11 +486,14 @@ class EnergyCostTrackerPanel extends HTMLElement {
   chartIntervalLabel(row, granularity) {
     const start = new Date(row.start);
     const end = new Date(row.end);
-    const sameDay = start.getFullYear() === end.getFullYear()
-      && start.getMonth() === end.getMonth()
-      && start.getDate() === end.getDate();
-    const time = d => d.toLocaleTimeString(this.locale(), { hour: "2-digit", minute: "2-digit" });
-    const date = d => d.toLocaleDateString(this.locale(), { day: "2-digit", month: "2-digit", year: "numeric" });
+    const sameDay = this.localDateKey(start) === this.localDateKey(end);
+    const startZone = this.localTimeZoneName(start);
+    const endZone = this.localTimeZoneName(end);
+    const crossesOffsetChange = Boolean(startZone && endZone && startZone !== endZone);
+    const time = d => this.localTime(d, crossesOffsetChange);
+    const date = d => d.toLocaleDateString(this.locale(), this.dateTimeOptions({
+      day: "2-digit", month: "2-digit", year: "numeric"
+    }));
 
     if (granularity === "hour" || granularity === "quarter") {
       if (sameDay) return `${date(start)} · ${time(start)}–${time(end)}`;
@@ -474,7 +502,7 @@ class EnergyCostTrackerPanel extends HTMLElement {
     if (granularity === "day") {
       return date(start);
     }
-    return `${start.toLocaleDateString(this.locale(), { month: "long", year: "numeric" })}`;
+    return `${start.toLocaleDateString(this.locale(), this.dateTimeOptions({ month: "long", year: "numeric" }))}`;
   }
 
   priceAxisAmount(value) {
@@ -1724,8 +1752,8 @@ class EnergyCostTrackerPanel extends HTMLElement {
     return `<div class="section"><h2>${this.tr("Historie zoeken", "Search history")}</h2><div class="filters"><label>${this.tr("Vanaf", "From")}<input id="start" type="date" value="${f.start || ""}"></label><label>${this.tr("Tot en met", "Through")}<input id="end" type="date" value="${f.end || ""}"></label><label>${this.tr("Activiteit", "Activity")}<select id="activity">${activityOptions}</select></label><label>${this.tr("Kwaliteit", "Quality")}<select id="quality"><option value="">${this.tr("Alle", "All")}</option>${qualityOptions}</select></label><button id="search">${this.tr("Zoeken", "Search")}</button></div>${this._history?`<div class="sub">${this._history.total} ${this.tr("intervallen gevonden", "intervals found")}</div>`:""}<div class="tableWrap"><table><thead><tr><th>${this.tr("Tijd", "Time")}</th><th>${this.tr("Afname kWh", "Import kWh")}</th><th>${this.tr("Terug kWh", "Export kWh")}</th>${tariffHeaders}${optionalHeaders}<th>${this.tr("Kosten", "Cost")}</th>${optionalFinancialHeaders}<th>${this.tr("Kwaliteit", "Quality")}</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
   }
 
-  date(value) { if(!value) return "—"; return new Date(value).toLocaleDateString(this.locale()); }
-  dateTime(value) { if(!value) return "—"; return new Date(value).toLocaleString(this.locale()); }
+  date(value) { if(!value) return "—"; return new Date(value).toLocaleDateString(this.locale(), this.dateTimeOptions()); }
+  dateTime(value) { if(!value) return "—"; return new Date(value).toLocaleString(this.locale(), this.dateTimeOptions({ timeZoneName: "short" })); }
 
   render() {
     if (!this.shadowRoot) return;

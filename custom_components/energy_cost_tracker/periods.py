@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import calendar
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def _clamped_datetime(year: int, month: int, day: int, tzinfo) -> datetime:
@@ -74,7 +74,9 @@ def billing_month_segments(
 def standard_periods(now: datetime, billing_month_day: int, billing_year_month: int, billing_year_day: int) -> dict[str, tuple[datetime, datetime]]:
     """Return standard and billing periods."""
     hour = now.replace(minute=0, second=0, microsecond=0)
-    next_hour = hour + timedelta(hours=1)
+    # An hour is an elapsed-time period. Local wall-clock arithmetic spans two
+    # real hours during the autumn DST fold (for example 02:00 CEST -> 03:00 CET).
+    next_hour = (hour.astimezone(timezone.utc) + timedelta(hours=1)).astimezone(hour.tzinfo)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     tomorrow = today + timedelta(days=1)
     week = today - timedelta(days=today.weekday())
