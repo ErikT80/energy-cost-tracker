@@ -6,6 +6,9 @@ The project follows [Semantic Versioning](https://semver.org/). While the integr
 
 ## [Unreleased]
 
+### Changed
+- Opt in to Home Assistant 2026.11+ in-place entity ID renames without removing and re-adding Energy Cost Tracker sensors. Existing runtime update listeners stay registered; older supported Home Assistant versions retain their original rename behavior.
+
 ## [0.1.0-rc.2] - 2026-10-03
 
 ### Fixed
