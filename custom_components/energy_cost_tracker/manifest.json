@@ -5,6 +5,9 @@
     "@ErikT80"
   ],
   "config_flow": true,
+  "categories": [
+    "energy"
+  ],
   "dependencies": [
     "frontend",
     "http",
