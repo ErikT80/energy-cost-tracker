@@ -15,6 +15,12 @@ def _key_tree(value):
     return None
 
 
+def test_manifest_declares_energy_category():
+    """Expose ECT in Home Assistant's Energy category for discovery."""
+    manifest = json.loads((INTEGRATION / "manifest.json").read_text())
+    assert manifest["categories"] == ["energy"]
+
+
 def test_manifest_and_const_versions_match():
     manifest = json.loads((INTEGRATION / "manifest.json").read_text())
     const_text = (INTEGRATION / "const.py").read_text()
