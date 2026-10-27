@@ -58,3 +58,12 @@ def test_frontend_disambiguates_dst_fold_timestamps_in_ha_timezone():
     assert 'timeZoneName: "short"' in js
     assert "crossesOffsetChange" in js
     assert "this.localDateKey(start) === this.localDateKey(end)" in js
+
+
+def test_frontend_surfaces_accounting_suspension_and_battery_degradation():
+    js = (INTEGRATION / "frontend" / "energy-cost-tracker-panel.js").read_text()
+    assert "accountingStatusBanner()" in js
+    assert "live.accounting_suspended" in js
+    assert "live.accounting_degraded" in js
+    assert "degraded_battery_sources" in js
+    assert "unavailable_energy_sources" in js

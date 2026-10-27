@@ -951,3 +951,56 @@ def test_chart_buckets_preserve_both_hours_during_dst_fall_back():
         timedelta(hours=1),
         timedelta(hours=2),
     }
+
+
+def test_rebaseline_source_starts_fresh_segment_without_booking_gap(tmp_path):
+    ledger = mod.Ledger(None, tmp_path / "ledger.db")
+    ledger._initialize()
+    first = ledger._observe_source(
+        "battery_charge:sensor.battery", "sensor.battery", 10.0, "2026-10-27T10:00:00+00:00"
+    )
+    assert first["delta"] == 0.0
+    normal = ledger._observe_source(
+        "battery_charge:sensor.battery", "sensor.battery", 10.5, "2026-10-27T10:01:00+00:00"
+    )
+    assert normal["delta"] == 0.5
+
+    ledger._rebaseline_source(
+        "battery_charge:sensor.battery",
+        "sensor.battery",
+        12.0,
+        "2026-10-27T10:10:00+00:00",
+        "source_recovered_rebaseline",
+    )
+    after = ledger._observe_source(
+        "battery_charge:sensor.battery", "sensor.battery", 12.1, "2026-10-27T10:11:00+00:00"
+    )
+    assert round(after["delta"], 6) == 0.1
+    events = ledger._recent_events(5)
+    assert any(event["event_type"] == "source_recovered_rebaseline" for event in events)
+
+
+def test_battery_unavailable_note_marks_period_battery_incomplete(tmp_path):
+    ledger = mod.Ledger(None, tmp_path / "ledger.db")
+    ledger._initialize()
+    ledger._insert_interval({
+        "start_ts": "2026-10-27T10:00:00+00:00",
+        "end_ts": "2026-10-27T10:15:00+00:00",
+        "seconds": 900.0,
+        "grid_import_kwh": 0.4,
+        "grid_export_kwh": 0.0,
+        "import_cost": 0.12,
+        "export_revenue": 0.0,
+        "fixed_cost": 0.01,
+        "net_cost": 0.13,
+        "battery_profit": None,
+        "quality": "estimated",
+        "notes": "battery_energy_unavailable",
+    })
+    summary = ledger._period_summary(
+        "2026-10-27T10:00:00+00:00", "2026-10-27T10:15:00+00:00"
+    )
+    assert summary["financial_complete"] is True
+    assert summary["net_cost"] == 0.13
+    assert summary["battery_complete"] is False
+    assert summary["incomplete_battery_intervals"] == 1
