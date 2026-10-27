@@ -133,6 +133,7 @@ class EnergyCostRuntime:
         self._backup_in_progress = False
         self._accounting_suspended = False
         self._unavailable_energy_sources: list[str] = []
+        self._degraded_battery_sources: set[str] = set()
         self._pending = IntervalAccumulator()
         self._ledger_boundary_unsub: Callable[[], None] | None = None
         self._tariff_change_task: asyncio.Task[Any] | None = None
@@ -143,6 +144,7 @@ class EnergyCostRuntime:
         await self.ledger.async_initialize()
         await self._async_load_inventory()
         await self._async_load_pending()
+        await self._async_load_degraded_battery_sources()
         profile_json = json.dumps(self.config, sort_keys=True, default=str)
         await self.ledger.async_ensure_profile(
             _utc_iso(dt_util.utcnow()), hashlib.sha256(profile_json.encode()).hexdigest(), self.config
@@ -229,6 +231,78 @@ class EnergyCostRuntime:
             for entity_id in self._configured_energy_entities()
             if _energy_kwh(self.hass.states.get(entity_id)) is None
         ]
+
+    def _configured_battery_energy_entities(self) -> set[str]:
+        return {
+            *(_entity_ids(self.config.get(CONF_BATTERY_CHARGE_ENERGY))),
+            *(_entity_ids(self.config.get(CONF_BATTERY_DISCHARGE_ENERGY))),
+        }
+
+    def _split_unavailable_energy_sources(
+        self, unavailable: list[str]
+    ) -> tuple[list[str], list[str]]:
+        """Split hard-stop sources from battery-only degraded sources."""
+        battery_sources = self._configured_battery_energy_entities()
+        degraded = sorted(entity_id for entity_id in unavailable if entity_id in battery_sources)
+        critical = sorted(entity_id for entity_id in unavailable if entity_id not in battery_sources)
+        return critical, degraded
+
+    def _battery_source_keys(self, entity_id: str) -> list[str]:
+        keys: list[str] = []
+        if entity_id in _entity_ids(self.config.get(CONF_BATTERY_CHARGE_ENERGY)):
+            keys.append(f"battery_charge:{entity_id}")
+        if entity_id in _entity_ids(self.config.get(CONF_BATTERY_DISCHARGE_ENERGY)):
+            keys.append(f"battery_discharge:{entity_id}")
+        return keys
+
+    async def _async_load_degraded_battery_sources(self) -> None:
+        raw = await self.ledger.async_get_meta("degraded_battery_sources")
+        if not raw:
+            return
+        try:
+            values = json.loads(raw)
+            self._degraded_battery_sources = {
+                str(value) for value in values if str(value) in self._configured_battery_energy_entities()
+            }
+        except (TypeError, ValueError, json.JSONDecodeError):
+            self._degraded_battery_sources = set()
+
+    async def _async_save_degraded_battery_sources(self) -> None:
+        await self.ledger.async_set_meta(
+            "degraded_battery_sources",
+            json.dumps(sorted(self._degraded_battery_sources)),
+        )
+
+    async def _async_rebaseline_recovered_battery_sources(
+        self, now: datetime, currently_unavailable: set[str]
+    ) -> None:
+        recovered = sorted(self._degraded_battery_sources - currently_unavailable)
+        if not recovered:
+            return
+        changed = False
+        for entity_id in recovered:
+            value = _energy_kwh(self.hass.states.get(entity_id))
+            if value is None:
+                continue
+            for source_key in self._battery_source_keys(entity_id):
+                await self.ledger.async_rebaseline_source(
+                    source_key, entity_id, value, _utc_iso(now), "source_recovered_rebaseline"
+                )
+            self._degraded_battery_sources.discard(entity_id)
+            changed = True
+        if changed:
+            await self._async_save_degraded_battery_sources()
+
+    async def _async_advance_available_battery_sources(
+        self, now: datetime, currently_unavailable: set[str]
+    ) -> None:
+        """Advance readable battery counters while asset accounting is degraded."""
+        for entity_id in _entity_ids(self.config.get(CONF_BATTERY_CHARGE_ENERGY)):
+            if entity_id not in currently_unavailable:
+                await self._source_delta(f"battery_charge:{entity_id}", entity_id, now)
+        for entity_id in _entity_ids(self.config.get(CONF_BATTERY_DISCHARGE_ENERGY)):
+            if entity_id not in currently_unavailable:
+                await self._source_delta(f"battery_discharge:{entity_id}", entity_id, now)
 
     def _all_configured_entities(self) -> list[str]:
         single_keys = (
@@ -420,7 +494,9 @@ class EnergyCostRuntime:
             "import_price": current_prices.import_price,
             "export_price": current_prices.export_price,
             "accounting_suspended": self._accounting_suspended,
+            "accounting_degraded": bool(self._degraded_battery_sources),
             "unavailable_energy_sources": list(self._unavailable_energy_sources),
+            "degraded_battery_sources": sorted(self._degraded_battery_sources),
         }
 
     async def _source_delta(self, source_key: str, entity_id: str | None, now: datetime) -> tuple[float, str]:
@@ -553,12 +629,21 @@ class EnergyCostRuntime:
             now = dt_util.utcnow()
             unavailable = self._unavailable_configured_energy_sources()
             self._unavailable_energy_sources = unavailable
-            self._accounting_suspended = bool(unavailable)
-            if unavailable:
-                # Do not advance any cumulative baseline while one configured energy
-                # source is unavailable. On recovery all deltas therefore cover the
-                # same elapsed window, which is booked as an estimated long interval.
-                # A tariff boundary may still safely commit already accumulated data.
+            critical_unavailable, degraded_battery = self._split_unavailable_energy_sources(unavailable)
+            unavailable_battery = set(degraded_battery)
+            self._accounting_suspended = bool(critical_unavailable)
+
+            # Remember battery outages even when a critical grid/PV source also
+            # forces a hard pause. This guarantees a safe re-baseline after recovery.
+            previous_degraded = set(self._degraded_battery_sources)
+            self._degraded_battery_sources.update(unavailable_battery)
+            if self._degraded_battery_sources != previous_degraded:
+                await self._async_save_degraded_battery_sources()
+
+            if critical_unavailable:
+                # Grid/PV cumulative sources still define the coherent energy frame.
+                # Keep the previous hard-stop behavior for those sources so no
+                # plausible-looking financial history is invented.
                 if boundary is not None and not self._pending.empty:
                     await self._async_flush_pending()
                 self._refresh_live()
@@ -567,6 +652,11 @@ class EnergyCostRuntime:
                     for listener in list(self._listeners):
                         listener()
                 return
+
+            # A recovered battery counter must start a fresh segment. Otherwise its
+            # cumulative delta would include the whole unavailable period and would
+            # be falsely booked into the first healthy accounting sample.
+            await self._async_rebaseline_recovered_battery_sources(now, unavailable_battery)
 
             last_tick_raw = await self.ledger.async_get_meta("last_tick")
             if last_tick_raw is None:
@@ -590,8 +680,21 @@ class EnergyCostRuntime:
             gi, q_gi = await self._source_delta("grid_import", self.config.get(CONF_GRID_IMPORT_ENERGY), now)
             ge, q_ge = await self._source_delta("grid_export", self.config.get(CONF_GRID_EXPORT_ENERGY), now)
             pv, q_pv = await self._multi_source_delta("pv", _entity_ids(self.config.get(CONF_PV_ENERGY)), now)
-            bc, q_bc = await self._multi_source_delta("battery_charge", _entity_ids(self.config.get(CONF_BATTERY_CHARGE_ENERGY)), now)
-            bd, q_bd = await self._multi_source_delta("battery_discharge", _entity_ids(self.config.get(CONF_BATTERY_DISCHARGE_ENERGY)), now)
+            battery_degraded = bool(unavailable_battery)
+            if battery_degraded:
+                # Keep readable battery baselines current, but do not use a partial
+                # fleet measurement for allocation or inventory accounting.
+                await self._async_advance_available_battery_sources(now, unavailable_battery)
+                bc, bd = 0.0, 0.0
+                q_bc, q_bd = [QUALITY_ESTIMATED], [QUALITY_ESTIMATED]
+                self.inventory.basis_known = False
+            else:
+                bc, q_bc = await self._multi_source_delta(
+                    "battery_charge", _entity_ids(self.config.get(CONF_BATTERY_CHARGE_ENERGY)), now
+                )
+                bd, q_bd = await self._multi_source_delta(
+                    "battery_discharge", _entity_ids(self.config.get(CONF_BATTERY_DISCHARGE_ENERGY)), now
+                )
 
             await self.ledger.async_set_meta("last_tick", _utc_iso(now))
             if current_prices.import_price is not None:
@@ -666,6 +769,8 @@ class EnergyCostRuntime:
                 quality = QUALITY_UNKNOWN_BATTERY_BASIS
 
             notes = []
+            if battery_degraded:
+                notes.append("battery_energy_unavailable")
             if bc > 1e-9 and bd > 1e-9:
                 notes.append("simultaneous_battery_charge_discharge")
                 if quality == QUALITY_EXACT:
@@ -699,11 +804,15 @@ class EnergyCostRuntime:
                     "export_revenue": result.export_revenue,
                     "fixed_cost": fixed_cost,
                     "net_cost": net_cost,
-                    "pv_value": result.pv_value,
-                    "battery_charge_cost": result.battery_charge_cost,
-                    "battery_discharge_value": result.battery_discharge_value,
-                    "battery_discharge_cost_basis": result.battery_discharge_cost_basis,
-                    "battery_profit": battery_profit,
+                    # Grid import/export costs remain authoritative during a
+                    # battery-meter outage. Asset allocations do not: explicitly
+                    # null their monetary values so summaries/charts show a gap
+                    # instead of pretending that zero battery flow was measured.
+                    "pv_value": None if battery_degraded and pv > 1e-9 else result.pv_value,
+                    "battery_charge_cost": None if battery_degraded else result.battery_charge_cost,
+                    "battery_discharge_value": None if battery_degraded else result.battery_discharge_value,
+                    "battery_discharge_cost_basis": None if battery_degraded else result.battery_discharge_cost_basis,
+                    "battery_profit": None if battery_degraded else battery_profit,
                     "battery_loss_cost": loss_cost,
                     "quality": quality,
                     "notes": ",".join(notes) if notes else None,

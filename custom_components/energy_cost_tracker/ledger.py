@@ -324,6 +324,54 @@ class Ledger:
             self._observe_source, source_key, entity_id, value, ts
         )
 
+    def _rebaseline_source(
+        self,
+        source_key: str,
+        entity_id: str,
+        value: float,
+        ts: str,
+        event_type: str,
+    ) -> None:
+        """Start a fresh cumulative-counter segment without booking a delta."""
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM source_state WHERE source_key=?", (source_key,)
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """INSERT INTO source_state
+                       (source_key, entity_id, last_value, last_ts, segment, reset_count, accumulated)
+                       VALUES (?, ?, ?, ?, 1, 0, 0)""",
+                    (source_key, entity_id, value, ts),
+                )
+            else:
+                conn.execute(
+                    """UPDATE source_state SET entity_id=?, last_value=?, last_ts=?,
+                       segment=segment+1 WHERE source_key=?""",
+                    (entity_id, value, ts, source_key),
+                )
+            conn.execute(
+                "INSERT INTO events(ts,event_type,source_key,details) VALUES(?,?,?,?)",
+                (
+                    ts,
+                    event_type,
+                    source_key,
+                    json.dumps({"entity_id": entity_id, "value": value}),
+                ),
+            )
+
+    async def async_rebaseline_source(
+        self,
+        source_key: str,
+        entity_id: str,
+        value: float,
+        ts: str,
+        event_type: str = "source_rebaseline",
+    ) -> None:
+        await self._async_run(
+            self._rebaseline_source, source_key, entity_id, value, ts, event_type
+        )
+
     def _insert_interval(self, row: dict[str, Any]) -> int:
         columns = list(row)
         placeholders = ",".join("?" for _ in columns)
@@ -457,7 +505,11 @@ class Ledger:
         result["incomplete_import_intervals"] = int(row.get("import_cost") is None and gi > 0)
         result["incomplete_export_intervals"] = int(row.get("export_revenue") is None and ge > 0)
         result["incomplete_pv_intervals"] = int(row.get("pv_value") is None and pv > 0)
-        result["incomplete_battery_intervals"] = int(row.get("battery_profit") is None and bd > 0)
+        notes = str(row.get("notes") or "")
+        result["incomplete_battery_intervals"] = int(
+            (row.get("battery_profit") is None and bd > 0)
+            or "battery_energy_unavailable" in notes
+        )
         result["non_exact_intervals"] = int(str(row.get("quality") or "exact") != "exact")
         return result
 
@@ -716,7 +768,9 @@ class Ledger:
               SUM(CASE WHEN import_cost IS NULL AND grid_import_kwh > 0 AND fraction > 0 THEN 1 ELSE 0 END) AS incomplete_import_intervals,
               SUM(CASE WHEN export_revenue IS NULL AND grid_export_kwh > 0 AND fraction > 0 THEN 1 ELSE 0 END) AS incomplete_export_intervals,
               SUM(CASE WHEN pv_value IS NULL AND pv_production_kwh > 0 AND fraction > 0 THEN 1 ELSE 0 END) AS incomplete_pv_intervals,
-              SUM(CASE WHEN battery_profit IS NULL AND battery_discharge_kwh > 0 AND fraction > 0 THEN 1 ELSE 0 END) AS incomplete_battery_intervals,
+              SUM(CASE WHEN ((battery_profit IS NULL AND battery_discharge_kwh > 0)
+                   OR instr(COALESCE(notes, ''), 'battery_energy_unavailable') > 0)
+                   AND fraction > 0 THEN 1 ELSE 0 END) AS incomplete_battery_intervals,
               SUM(CASE WHEN quality != 'exact' AND fraction > 0 THEN 1 ELSE 0 END) AS non_exact_intervals,
               MIN(start_ts) AS first_ts,
               MAX(end_ts) AS last_ts

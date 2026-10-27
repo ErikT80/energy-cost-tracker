@@ -6,6 +6,16 @@ The project follows [Semantic Versioning](https://semver.org/). While the integr
 
 ## [Unreleased]
 
+## [0.1.0-rc.4] - 2026-10-27
+
+### Fixed
+- A temporary outage of a configured battery cumulative-energy sensor no longer pauses otherwise reliable grid import/export and fixed-cost accounting. Battery-dependent values are explicitly marked incomplete instead.
+- Recovered battery cumulative counters are re-baselined before normal battery accounting resumes, preventing energy accumulated during an outage from being booked into one later interval.
+- The sidebar now shows a prominent accounting-status warning with the exact unavailable cumulative-energy entities when accounting is paused or battery accounting is degraded.
+
+### Changed
+- Battery power sensors remain live-display-only and never participate in the cumulative-source availability gate.
+
 ## [0.1.0-rc.3] - 2026-10-19
 
 ### Fixed
